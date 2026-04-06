@@ -34,6 +34,18 @@ local function trim_suffix_overlap(text, suffix)
   return text
 end
 
+local function trim_trailing_blank_lines(lines)
+  while #lines > 0 and lines[#lines] == "" do
+    table.remove(lines, #lines)
+  end
+
+  return lines
+end
+
+local function split_lines(text)
+  return vim.split(text, "\n", { plain = true, trimempty = false })
+end
+
 function M.build(bufnr, opts)
   local api = vim.api
   local winid = api.nvim_get_current_win()
@@ -50,7 +62,7 @@ function M.build(bufnr, opts)
   local after_end = math.min(api.nvim_buf_line_count(bufnr), row + opts.suggestion.max_context_lines.after + 1)
   local line_prefix = line:sub(1, col)
   local line_suffix = line:sub(col + 1)
-  local prefix_non_space_count = select(2, line_prefix:gsub("%s", ""))
+  local prefix_non_space_count = #(line_prefix:gsub("%s+", ""))
 
   return {
     bufnr = bufnr,
@@ -114,7 +126,7 @@ function M.is_snapshot_stale(snapshot)
   return line_at(snapshot.bufnr, snapshot.row) ~= snapshot.line
 end
 
-function M.sanitize_completion(context, raw_text)
+function M.sanitize_completion(context, raw_text, opts)
   if type(raw_text) ~= "string" then
     return nil
   end
@@ -123,19 +135,51 @@ function M.sanitize_completion(context, raw_text)
   text = strip_code_fences(text)
   text = text:gsub("^Output:%s*", "")
 
-  local first_line = text:match("([^\n]*)") or ""
-  if first_line == "" then
-    return nil
-  end
-
+  local lines = split_lines(text)
+  local first_line = lines[1] or ""
   first_line = strip_prefix_duplication(context.line_prefix, first_line)
-  first_line = trim_suffix_overlap(first_line, context.line_suffix)
+  lines[1] = first_line
 
-  if first_line == "" then
+  local multiline_enabled = opts
+    and opts.suggestion
+    and opts.suggestion.multiline
+    and context.line_suffix == ""
+    and #lines > 1
+
+  if not multiline_enabled then
+    first_line = trim_suffix_overlap(first_line, context.line_suffix)
+    if first_line == "" then
+      return nil
+    end
+
+    return first_line
+  end
+
+  local max_lines = opts.suggestion.max_lines or 1
+  local sanitized = {}
+
+  for index = 1, math.min(#lines, max_lines) do
+    sanitized[#sanitized + 1] = lines[index]
+  end
+
+  trim_trailing_blank_lines(sanitized)
+  if #sanitized == 0 then
     return nil
   end
 
-  return first_line
+  local has_visible_text = false
+  for _, line in ipairs(sanitized) do
+    if line:match("%S") then
+      has_visible_text = true
+      break
+    end
+  end
+
+  if not has_visible_text then
+    return nil
+  end
+
+  return table.concat(sanitized, "\n")
 end
 
 return M

@@ -113,7 +113,7 @@ function CodexProvider:_ensure_thread(callback)
       ephemeral = true,
       experimentalRawEvents = false,
       persistExtendedHistory = false,
-      baseInstructions = prompt.base_instructions(self.opts.codex.base_instructions),
+      baseInstructions = prompt.base_instructions(self.opts),
       serviceName = "agentify.nvim",
     }
 
@@ -287,12 +287,12 @@ function CodexProvider:complete(context, callback)
     local params = {
       threadId = thread_id,
       approvalPolicy = "never",
-      effort = "none",
+      effort = self.opts.codex.effort,
       summary = "none",
       input = {
         {
           type = "text",
-          text = prompt.build_completion_request(context),
+          text = prompt.build_completion_request(context, self.opts),
           text_elements = {},
         },
       },
@@ -352,6 +352,14 @@ function CodexProvider:complete(context, callback)
   end)
 
   return handle
+end
+
+function CodexProvider:warmup(callback)
+  self:_ensure_thread(function(_, err)
+    if callback then
+      callback(err == nil, err)
+    end
+  end)
 end
 
 function CodexProvider:status(callback)

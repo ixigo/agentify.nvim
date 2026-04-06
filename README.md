@@ -2,11 +2,14 @@
 
 `agentify.nvim` is a Codex-backed inline autocomplete plugin for Neovim `0.10+`.
 
+This is still a work-in-progress project. It is being developed and tested day to day by Ranveer Sequeira as a daily-use plugin. If you hit an issue, please open an issue or send a PR.
+
 V1 is intentionally narrow:
 - one provider abstraction, with `codex app-server` as adapter `#1`
 - plugin-managed local `stdio` child process
 - existing Codex CLI auth on the machine
-- stateless, context-only, single-line suggestions
+- stateless, context-only suggestions, with multiline only at end-of-line
+- fast local buffer reuse for repeated identifiers and repeated lines
 - explicit status/setup commands instead of silent failure
 
 ## Requirements
@@ -39,7 +42,7 @@ require("agentify").setup({
   },
 })
 
-vim.keymap.set("i", "<M-l>", function()
+vim.keymap.set("i", "<C-l>", function()
   require("agentify").accept()
 end)
 
@@ -70,10 +73,18 @@ require("agentify").setup({
   suggestion = {
     min_chars = 3,
     highlight = "Comment",
+    multiline = true,
+    max_lines = 4,
     max_context_lines = {
-      before = 20,
-      after = 20,
+      before = 8,
+      after = 8,
     },
+  },
+  local_suggestions = {
+    enabled = true,
+    min_chars = 3,
+    max_scan_lines = 400,
+    max_suffix_length = 80,
   },
   filetypes = {
     allow = {
@@ -100,9 +111,11 @@ require("agentify").setup({
   codex = {
     command = { "codex", "app-server" },
     model = nil,
+    effort = "none",
     service_tier = nil,
     base_instructions = nil,
     refresh_account_token = false,
+    warmup_on_insert = true,
   },
   logging = {
     level = "warn",
@@ -114,10 +127,13 @@ require("agentify").setup({
 ## Behavior
 
 - automatic suggestions are debounced on `TextChangedI` and `TextChangedP`
-- manual trigger uses the same request path as auto-trigger
+- auto suggestions first try a fast local buffer completion for repeated identifiers and repeated lines
+- manual trigger always goes through Codex
 - stale turns are ignored when the buffer changes, the cursor moves, or insert mode exits
-- suggestions are rendered as inline ghost text with a single extmark
+- multiline suggestions are allowed only when the cursor is at end-of-line
+- suggestions are rendered as inline ghost text, with trailing lines shown as virtual lines when needed
 - accept full, accept next word, and dismiss are exposed as Lua APIs
+- Codex is warmed on `InsertEnter` for enabled buffers to reduce first-request latency
 
 ## Troubleshooting
 
@@ -141,7 +157,6 @@ If the transport starts but suggestions do not appear:
 
 ## Non-goals
 
-- multiline suggestions
 - tool use during completion turns
 - hidden auth flows or approval prompts while typing
 - support below Neovim `0.10`
@@ -155,7 +170,7 @@ Run the unit suite:
 make test
 ```
 
-Run the live Codex smoke test in a logged-in environment:
+Run the headless smoke test:
 
 ```sh
 nvim --headless -u tests/minimal_init.lua "+luafile scripts/smoke.lua"

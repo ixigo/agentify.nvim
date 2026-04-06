@@ -7,10 +7,18 @@ M.defaults = {
   suggestion = {
     min_chars = 3,
     highlight = "Comment",
+    multiline = true,
+    max_lines = 4,
     max_context_lines = {
-      before = 20,
-      after = 20,
+      before = 8,
+      after = 8,
     },
+  },
+  local_suggestions = {
+    enabled = true,
+    min_chars = 3,
+    max_scan_lines = 400,
+    max_suffix_length = 80,
   },
   filetypes = {
     allow = {
@@ -37,9 +45,11 @@ M.defaults = {
   codex = {
     command = { "codex", "app-server" },
     model = nil,
+    effort = "none",
     service_tier = nil,
     base_instructions = nil,
     refresh_account_token = false,
+    warmup_on_insert = true,
   },
   logging = {
     level = "warn",
@@ -125,9 +135,17 @@ function M.normalize(opts)
   expect_type("suggestion", merged.suggestion, "table")
   expect_positive_integer("suggestion.min_chars", merged.suggestion.min_chars, true)
   expect_type("suggestion.highlight", merged.suggestion.highlight, "string")
+  expect_type("suggestion.multiline", merged.suggestion.multiline, "boolean")
+  expect_positive_integer("suggestion.max_lines", merged.suggestion.max_lines)
   expect_type("suggestion.max_context_lines", merged.suggestion.max_context_lines, "table")
   expect_positive_integer("suggestion.max_context_lines.before", merged.suggestion.max_context_lines.before, true)
   expect_positive_integer("suggestion.max_context_lines.after", merged.suggestion.max_context_lines.after, true)
+
+  expect_type("local_suggestions", merged.local_suggestions, "table")
+  expect_type("local_suggestions.enabled", merged.local_suggestions.enabled, "boolean")
+  expect_positive_integer("local_suggestions.min_chars", merged.local_suggestions.min_chars, true)
+  expect_positive_integer("local_suggestions.max_scan_lines", merged.local_suggestions.max_scan_lines)
+  expect_positive_integer("local_suggestions.max_suffix_length", merged.local_suggestions.max_suffix_length)
 
   expect_type("filetypes", merged.filetypes, "table")
   expect_string_list("filetypes.allow", merged.filetypes.allow)
@@ -138,6 +156,9 @@ function M.normalize(opts)
   if merged.codex.model ~= nil then
     expect_type("codex.model", merged.codex.model, "string")
   end
+  if merged.codex.effort ~= nil then
+    expect_type("codex.effort", merged.codex.effort, "string")
+  end
   if merged.codex.service_tier ~= nil then
     expect_type("codex.service_tier", merged.codex.service_tier, "string")
   end
@@ -145,6 +166,7 @@ function M.normalize(opts)
     expect_type("codex.base_instructions", merged.codex.base_instructions, "string")
   end
   expect_type("codex.refresh_account_token", merged.codex.refresh_account_token, "boolean")
+  expect_type("codex.warmup_on_insert", merged.codex.warmup_on_insert, "boolean")
 
   expect_type("logging", merged.logging, "table")
   if not valid_log_levels[merged.logging.level] then

@@ -16,11 +16,12 @@ local function block(label, lines)
   return label .. ":\n" .. tostring(lines)
 end
 
-function M.base_instructions(user_override)
+function M.base_instructions(opts)
+  local user_override = opts.codex.base_instructions
   local lines = {
     "You power a Neovim inline autocomplete feature.",
     "Return only the exact text that should be inserted at the cursor.",
-    "Return a single line only.",
+    ("Return at most %d lines."):format(opts.suggestion.max_lines),
     "Do not wrap the answer in markdown, quotes, or code fences.",
     "Do not explain your choice.",
     "Do not produce plans, reasoning, or analysis.",
@@ -35,11 +36,13 @@ function M.base_instructions(user_override)
   return table.concat(lines, "\n")
 end
 
-function M.build_completion_request(context)
+function M.build_completion_request(context, opts)
+  local multiline_allowed = opts.suggestion.multiline and context.line_suffix == ""
   local lines = {
-    "Complete the current line at the cursor.",
+    multiline_allowed and "Complete from the cursor and you may continue onto the next lines."
+      or "Complete the current line at the cursor.",
     "Reply with completion text only.",
-    "Single line only.",
+    multiline_allowed and ("You may return up to %d lines."):format(opts.suggestion.max_lines) or "Single line only.",
     "",
     ("FILEPATH: %s"):format(context.filepath ~= "" and context.filepath or "[No Name]"),
     ("FILETYPE: %s"):format(context.filetype ~= "" and context.filetype or "plain"),
@@ -52,7 +55,9 @@ function M.build_completion_request(context)
     block("CURRENT_LINE_SUFFIX", context.line_suffix),
     block("NEARBY_LINES_AFTER", context.after_lines),
     "",
-    "Return only the text to insert at the cursor.",
+    multiline_allowed
+      and "Return only the text to insert at the cursor. Do not repeat existing suffix text from later lines."
+      or "Return only the text to insert at the cursor.",
   }
 
   return table.concat(lines, "\n")

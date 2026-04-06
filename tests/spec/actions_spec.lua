@@ -51,5 +51,21 @@ return {
       end)
     end,
   },
-}
+  {
+    name = "accepts a multiline suggestion",
+    fn = function()
+      h.with_buffer({ "if ready then" }, function(bufnr)
+        state.get_buffer(bufnr).suggestion = {
+          bufnr = bufnr,
+          row = 0,
+          col = #"if ready then",
+          text = "\n  return value\nend",
+        }
 
+        h.ok(actions.accept(bufnr))
+        h.eq({ "if ready then", "  return value", "end" }, vim.api.nvim_buf_get_lines(bufnr, 0, -1, false))
+        h.eq({ 3, 2 }, vim.api.nvim_win_get_cursor(0))
+      end)
+    end,
+  },
+}

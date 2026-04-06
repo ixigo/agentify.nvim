@@ -1,6 +1,7 @@
 local actions = require("agentify.actions")
 local config = require("agentify.config")
 local context = require("agentify.context")
+local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
 local render = require("agentify.render")
 local state = require("agentify.state")
@@ -96,7 +97,7 @@ function M._handle_provider_event(bufnr, request_token, snapshot, ctx, event)
     return
   end
 
-  local text = context.sanitize_completion(ctx, event.text)
+  local text = context.sanitize_completion(ctx, event.text, M.opts)
   if text and text ~= "" then
     buffer_state.suggestion = {
       bufnr = bufnr,
@@ -139,6 +140,28 @@ function M.request(bufnr, request_opts)
   clear_buffer(bufnr, "superseded")
 
   local buffer_state = state.get_buffer(bufnr)
+
+  if not request_opts.manual then
+    local local_completion = local_suggest.suggest(bufnr, ctx, M.opts)
+    if local_completion then
+      buffer_state.suggestion = {
+        bufnr = bufnr,
+        row = ctx.row,
+        col = ctx.col,
+        text = local_completion.text,
+        request_token = state.next_request(bufnr),
+        source = local_completion.source,
+      }
+      render.show(bufnr, buffer_state.suggestion, M.opts)
+      log.debug("rendered local suggestion", {
+        bufnr = bufnr,
+        source = local_completion.source,
+        text = local_completion.text,
+      })
+      return true, "local-suggestion"
+    end
+  end
+
   local token = state.next_request(bufnr)
   local snapshot = context.snapshot(ctx)
   snapshot.require_insert_mode = not request_opts.manual
@@ -233,6 +256,26 @@ function M.setup(opts, provider)
       end
 
       M.schedule(args.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("InsertEnter", {
+    group = group,
+    callback = function(args)
+      if not M.opts.codex.warmup_on_insert or not M.provider.warmup then
+        return
+      end
+
+      local ok = buffer_eligible(args.buf)
+      if not ok then
+        return
+      end
+
+      M.provider:warmup(function(_, err)
+        if err then
+          log.debug("provider warmup failed", { error = err })
+        end
+      end)
     end,
   })
 

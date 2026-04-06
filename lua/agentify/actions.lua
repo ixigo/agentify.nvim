@@ -25,6 +25,25 @@ local function next_word_fragment(text)
   return leading .. token .. trailing
 end
 
+local function split_inserted_lines(text)
+  return vim.split(text, "\n", { plain = true, trimempty = false })
+end
+
+local function cursor_col_after_insert(base_col, inserted_lines)
+  local raw_col
+  if #inserted_lines == 1 then
+    raw_col = base_col + #inserted_lines[1]
+  else
+    raw_col = #inserted_lines[#inserted_lines]
+  end
+
+  if not vim.api.nvim_get_mode().mode:match("^i") and raw_col > 0 then
+    return raw_col - 1
+  end
+
+  return raw_col
+end
+
 local function apply_suggestion(bufnr, text)
   local buffer_state = state.get_buffer(bufnr)
   local suggestion = buffer_state.suggestion
@@ -36,10 +55,13 @@ local function apply_suggestion(bufnr, text)
   render.clear(bufnr)
   state.clear_suggestion(bufnr)
 
-  vim.api.nvim_buf_set_text(bufnr, suggestion.row, suggestion.col, suggestion.row, suggestion.col, { text })
+  local inserted_lines = split_inserted_lines(text)
+  vim.api.nvim_buf_set_text(bufnr, suggestion.row, suggestion.col, suggestion.row, suggestion.col, inserted_lines)
 
   if vim.api.nvim_get_current_buf() == bufnr then
-    vim.api.nvim_win_set_cursor(0, { suggestion.row + 1, suggestion.col + #text })
+    local row = suggestion.row + #inserted_lines
+    local col = cursor_col_after_insert(suggestion.col, inserted_lines)
+    vim.api.nvim_win_set_cursor(0, { row, col })
   end
 
   return true
@@ -82,4 +104,3 @@ function M.dismiss(bufnr)
 end
 
 return M
-
