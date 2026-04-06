@@ -1,5 +1,14 @@
 # agentify.nvim
 
+```text
+    _                    __  _                _           
+   / \   __ _  ___ _ __ / _|(_) __ _   _ __  (_)_   ____ _
+  / _ \ / _` |/ _ \ '__| |_| |/ _` | | '_ \ | \ \ / / _` |
+ / ___ \ (_| |  __/ |  |  _| | (_| | | | | || |\ V / (_| |
+/_/   \_\__, |\___|_|  |_| |_|\__, | |_| |_|/ | \_/ \__,_|
+        |___/                 |___/         |__/          
+```
+
 `agentify.nvim` is a Codex-backed inline autocomplete plugin for Neovim `0.10+`.
 
 This is still a work-in-progress project. It is being developed and tested day to day by Ranveer Sequeira as a daily-use plugin. If you hit an issue, please open an issue or send a PR.
@@ -196,3 +205,13 @@ Run the headless smoke test:
 ```sh
 nvim --headless -u tests/minimal_init.lua "+luafile scripts/smoke.lua"
 ```
+
+## Attribution
+
+`agentify.nvim` is being built and daily-driven by Ranveer Sequeira.
+
+Codex-backed completion depends on the local Codex CLI `app-server` runtime and the surrounding Neovim/LSP ecosystem. If you run into issues or want to improve the experience, open an issue or send a PR.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
