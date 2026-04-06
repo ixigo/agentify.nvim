@@ -60,6 +60,7 @@ local function arrow_function_template(ctx)
     text = block_template(ctx, leading),
     source = "template-arrow-function",
     reason = "template-suggestion",
+    provisional = true,
   }
 end
 

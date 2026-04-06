@@ -26,6 +26,9 @@ function M.base_instructions(opts)
     "Do not explain your choice.",
     "Do not produce plans, reasoning, or analysis.",
     "Do not use tools or access files outside the supplied context.",
+    "Infer intent from symbol names, parameter names, diagnostics, and nearby code.",
+    "When the cursor is at a definition site, prefer a useful first implementation over a placeholder stub.",
+    "Match the local file style and reuse nearby identifiers when they fit the intent.",
     "If there is no confident completion, return an empty string.",
   }
 
@@ -62,6 +65,17 @@ function M.build_completion_request(context, opts)
     lines[#lines + 1] = block("CURRENT_LINE_DIAGNOSTICS", context.lsp.diagnostics)
     if context.lsp.completions then
       lines[#lines + 1] = block("LSP_COMPLETION_CANDIDATES", context.lsp.completions)
+    end
+  end
+
+  if context.intent then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = block("INTENT_KIND", context.intent.kind)
+    lines[#lines + 1] = block("INTENT_SYMBOL", context.intent.symbol_name)
+    lines[#lines + 1] = block("INTENT_PARAMETERS", context.intent.parameters)
+    lines[#lines + 1] = block("INTENT_HINTS", context.intent.hints)
+    if context.intent.related_lines then
+      lines[#lines + 1] = block("RELATED_BUFFER_LINES", context.intent.related_lines)
     end
   end
 

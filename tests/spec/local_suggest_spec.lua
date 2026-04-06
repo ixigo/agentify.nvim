@@ -30,7 +30,7 @@ return {
         local suggestion = local_suggest.suggest(bufnr, ctx, config.normalize({}))
 
         h.ok(suggestion)
-        h.eq("gate", suggestion.text)
+        h.eq("ate", suggestion.text)
         h.eq("buffer-token", suggestion.source)
       end)
     end,
@@ -44,7 +44,7 @@ return {
         local suggestion = local_suggest.suggest(bufnr, ctx, config.normalize({}))
 
         h.ok(suggestion)
-        h.eq("ponse} />", suggestion.text)
+        h.eq("onse} />", suggestion.text)
         h.eq("buffer-line", suggestion.source)
       end)
     end,
@@ -89,7 +89,7 @@ return {
         h.eq(true, ok)
         h.eq("local-suggestion", reason)
         h.eq(0, provider_calls)
-        h.eq("ponse} />", state.get_buffer(bufnr).suggestion.text)
+        h.eq("onse} />", state.get_buffer(bufnr).suggestion.text)
       end)
     end,
   },

@@ -27,6 +27,14 @@ M.defaults = {
     max_completion_items = 8,
     max_diagnostics = 3,
   },
+  intent = {
+    enabled = true,
+    min_symbol_chars = 3,
+    min_word_chars = 3,
+    max_terms = 6,
+    max_open_buffers = 4,
+    max_related_lines = 8,
+  },
   filetypes = {
     allow = {
       "bash",
@@ -160,6 +168,14 @@ function M.normalize(opts)
   expect_positive_integer("lsp.timeout_ms", merged.lsp.timeout_ms)
   expect_positive_integer("lsp.max_completion_items", merged.lsp.max_completion_items)
   expect_positive_integer("lsp.max_diagnostics", merged.lsp.max_diagnostics)
+
+  expect_type("intent", merged.intent, "table")
+  expect_type("intent.enabled", merged.intent.enabled, "boolean")
+  expect_positive_integer("intent.min_symbol_chars", merged.intent.min_symbol_chars, true)
+  expect_positive_integer("intent.min_word_chars", merged.intent.min_word_chars, true)
+  expect_positive_integer("intent.max_terms", merged.intent.max_terms)
+  expect_positive_integer("intent.max_open_buffers", merged.intent.max_open_buffers)
+  expect_positive_integer("intent.max_related_lines", merged.intent.max_related_lines)
 
   expect_type("filetypes", merged.filetypes, "table")
   expect_string_list("filetypes.allow", merged.filetypes.allow)

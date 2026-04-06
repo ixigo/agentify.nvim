@@ -18,6 +18,8 @@ return {
       h.eq({ "markdown" }, opts.filetypes.deny)
       h.eq(true, opts.lsp.enabled)
       h.eq(2, opts.lsp.min_chars)
+      h.eq(true, opts.intent.enabled)
+      h.eq(4, opts.intent.max_open_buffers)
     end,
   },
   {

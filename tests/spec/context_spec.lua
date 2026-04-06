@@ -27,7 +27,7 @@ return {
         h.eq(line:sub(1, ctx.col), ctx.line_prefix)
         h.eq(line, ctx.line_prefix .. ctx.line_suffix)
         h.eq({ "print(prefix)" }, ctx.after_lines)
-        h.eq(#("localprefix=fo"), ctx.prefix_non_space_count)
+        h.eq(#("localprefix=foo"), ctx.prefix_non_space_count)
       end)
     end,
   },

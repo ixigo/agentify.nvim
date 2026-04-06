@@ -10,6 +10,7 @@ V1 is intentionally narrow:
 - existing Codex CLI auth on the machine
 - stateless, context-only suggestions, with multiline only at end-of-line
 - LSP-aware fast suggestions when an attached language server can help
+- intent-aware Codex prompts that infer meaning from names like `convertArrayToString`, current parameters, and related open buffers
 - fast structural templates for common patterns like JS/TS arrow-function blocks, JS/TS `console.log(...)`, and Python/Lua `print(...)`
 - fast local buffer reuse for repeated identifiers and repeated lines
 - explicit status/setup commands instead of silent failure
@@ -95,6 +96,14 @@ require("agentify").setup({
     max_completion_items = 8,
     max_diagnostics = 3,
   },
+  intent = {
+    enabled = true,
+    min_symbol_chars = 3,
+    min_word_chars = 3,
+    max_terms = 6,
+    max_open_buffers = 4,
+    max_related_lines = 8,
+  },
   filetypes = {
     allow = {
       "bash",
@@ -136,7 +145,10 @@ require("agentify").setup({
 ## Behavior
 
 - automatic suggestions are debounced on `TextChangedI` and `TextChangedP`
-- auto suggestions first try structural templates, then fast local buffer reuse, then bounded LSP completions, and finally Codex
+- auto suggestions build semantic intent from the current line, symbol names, parameters, and related open buffers before routing
+- definition-like lines prefer Codex over weak suffix completions, so named functions can produce meaningful bodies instead of only literal reuse
+- auto suggestions still try structural templates, fast local buffer reuse, and bounded LSP completions when those are the best fit
+- provisional templates like JS/TS arrow-function blocks can render immediately and then be upgraded by a richer Codex completion
 - manual trigger always goes through Codex
 - stale turns are ignored when the buffer changes, the cursor moves, or insert mode exits
 - multiline suggestions are allowed only when the cursor is at end-of-line

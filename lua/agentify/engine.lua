@@ -1,6 +1,7 @@
 local actions = require("agentify.actions")
 local config = require("agentify.config")
 local context = require("agentify.context")
+local intent = require("agentify.intent")
 local lsp = require("agentify.lsp")
 local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
@@ -85,7 +86,9 @@ function M._handle_provider_event(bufnr, request_token, snapshot, ctx, event)
   if event.type == "error" then
     buffer_state.last_error = event.error
     buffer_state.active_request = nil
-    actions.dismiss(bufnr)
+    if not active.preserve_existing then
+      actions.dismiss(bufnr)
+    end
     log.warn("provider error", { error = event.error })
     return
   end
@@ -109,7 +112,7 @@ function M._handle_provider_event(bufnr, request_token, snapshot, ctx, event)
       request_token = request_token,
     }
     render.show(bufnr, buffer_state.suggestion, M.opts)
-  elseif event.type == "completed" then
+  elseif event.type == "completed" and not active.preserve_existing then
     actions.dismiss(bufnr)
   end
 
@@ -134,6 +137,7 @@ function M.request(bufnr, request_opts)
     return false, build_reason
   end
   ctx.lsp = lsp.snapshot(bufnr, ctx.row, M.opts)
+  ctx.intent = intent.analyze(bufnr, ctx, M.opts)
 
   if not request_opts.manual and not M.should_auto_trigger(ctx, M.opts) then
     clear_buffer(bufnr, "below-threshold")
@@ -146,10 +150,15 @@ function M.request(bufnr, request_opts)
 
   if not request_opts.manual then
     local fast_completion = template_suggest.suggest(ctx, M.opts)
-      or local_suggest.suggest(bufnr, ctx, M.opts)
-      or lsp.suggest(bufnr, ctx, M.opts, function(text)
-        return context.sanitize_completion(ctx, text, M.opts)
-      end)
+    if not intent.prefers_provider(ctx) then
+      fast_completion = fast_completion
+        or local_suggest.suggest(bufnr, ctx, M.opts)
+        or lsp.suggest(bufnr, ctx, M.opts, function(text)
+          return context.sanitize_completion(ctx, text, M.opts)
+        end)
+    end
+
+    local continue_to_provider = intent.should_continue_provider(ctx, fast_completion)
     if fast_completion then
       buffer_state.suggestion = {
         bufnr = bufnr,
@@ -165,7 +174,9 @@ function M.request(bufnr, request_opts)
         source = fast_completion.source,
         text = fast_completion.text,
       })
-      return true, fast_completion.reason or fast_completion.source
+      if not continue_to_provider then
+        return true, fast_completion.reason or fast_completion.source
+      end
     end
   end
 
@@ -189,6 +200,7 @@ function M.request(bufnr, request_opts)
     token = token,
     handle = handle,
     snapshot = snapshot,
+    preserve_existing = buffer_state.suggestion ~= nil,
   }
 
   return true, nil
