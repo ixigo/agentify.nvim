@@ -1,34 +1,49 @@
 # agentify.nvim
 
 ```text
-    _                    __  _                _           
-   / \   __ _  ___ _ __ / _|(_) __ _   _ __  (_)_   ____ _
-  / _ \ / _` |/ _ \ '__| |_| |/ _` | | '_ \ | \ \ / / _` |
- / ___ \ (_| |  __/ |  |  _| | (_| | | | | || |\ V / (_| |
-/_/   \_\__, |\___|_|  |_| |_|\__, | |_| |_|/ | \_/ \__,_|
-        |___/                 |___/         |__/          
+                        _   _  __                    _
+  __ _  __ _  ___ _ __ | |_(_)/ _|_   _   _ ____   _(_)_ __ ___
+ / _` |/ _` |/ _ \ '_ \| __| | |_| | | | | '_ \ \ / / | '_ ` _ \
+| (_| | (_| |  __/ | | | |_| |  _| |_| |_| | | \ V /| | | | | | |
+ \__,_|\__, |\___|_| |_|\__|_|_|  \__, (_)_| |_|\_/ |_|_| |_| |_|
+       |___/                      |___/
 ```
 
-`agentify.nvim` is a Codex-backed inline autocomplete plugin for Neovim `0.10+`.
+`agentify.nvim` is a Codex-backed inline completion plugin for Neovim `0.10+`.
 
-This is still a work-in-progress project. It is being developed and tested day to day by Ranveer Sequeira as a daily-use plugin. If you hit an issue, please open an issue or send a PR.
+It is built for people who want useful completions without leaving insert mode. The plugin keeps the flow lightweight: it can reuse nearby code and LSP context for fast suggestions, then lean on Codex when the line needs real intent instead of simple suffix matching.
 
-V1 is intentionally narrow:
-- one provider abstraction, with `codex app-server` as adapter `#1`
-- plugin-managed local `stdio` child process
-- existing Codex CLI auth on the machine
-- stateless, context-only suggestions, with multiline only at end-of-line
-- LSP-aware fast suggestions when an attached language server can help
-- intent-aware Codex prompts that infer meaning from names like `convertArrayToString`, current parameters, and related open buffers
-- fast structural templates for common patterns like JS/TS arrow-function blocks, JS/TS `console.log(...)`, and Python/Lua `print(...)`
-- fast local buffer reuse for repeated identifiers and repeated lines
-- explicit status/setup commands instead of silent failure
+## Why use it
+
+- Inline ghost-text completions that stay inside your normal editing flow
+- Uses your existing local `codex` CLI session, so there is no extra auth UI inside Neovim
+- Pulls signal from the current line, nearby code, LSP context, symbol names, and related open buffers
+- Supports full accept, word-by-word accept, dismiss, and manual trigger
+- Optimized for practical latency with fast local/template suggestions and Codex upgrades when needed
+
+## What it is good at
+
+- Filling in function bodies from descriptive names such as `convertArrayToString`
+- Expanding common editing patterns like JS/TS arrow-function blocks
+- Helping with quick debug statements such as `console.log(...)` and `print(...)`
+- Reusing identifiers and repeated lines from the current buffer
+- Staying out of the way when the cursor moves or the buffer changes
+
+## Scope
+
+This project is intentionally narrow right now:
+
+- one provider: Codex through `codex app-server`
+- plugin-managed local `stdio` transport
+- existing Codex CLI authentication on the machine
+- inline suggestions only, with multiline suggestions only at end-of-line
+- Neovim `0.10+`
 
 ## Requirements
 
 - Neovim `0.10+`
-- `codex` CLI on `PATH`
-- an authenticated Codex session on the machine
+- `codex` on `PATH`
+- an authenticated Codex CLI session on the same machine
 
 ## Install
 
@@ -43,7 +58,7 @@ With `lazy.nvim`:
 }
 ```
 
-Minimal setup with keymaps:
+A practical setup with common keymaps:
 
 ```lua
 require("agentify").setup({
@@ -67,103 +82,52 @@ vim.keymap.set("i", "<M-]>", function()
 end)
 ```
 
+## Daily usage
+
+- Start typing in insert mode and wait for the debounce window to pass.
+- Accept the whole suggestion with `require("agentify").accept()`.
+- Accept the next word with `require("agentify").accept_word()`.
+- Dismiss the current suggestion with `require("agentify").dismiss()`.
+- Use `:AgentifySuggest` when you want to force a manual Codex request.
+- Use `:AgentifyStatus` when something feels off.
+- Use `:AgentifySetup` when you want actionable setup guidance.
+
 ## Commands
 
-- `:AgentifyStatus` checks provider readiness, auth state, rate-limit visibility, and current buffer eligibility.
-- `:AgentifySetup` prints actionable setup guidance without forcing prompts into insert mode.
-- `:AgentifySuggest` manually requests a suggestion for the current cursor position.
+- `:AgentifyStatus` shows provider readiness, auth visibility, transport state, rate-limit info, and whether the current buffer is eligible.
+- `:AgentifySetup` prints focused setup help when the CLI or auth state is missing.
+- `:AgentifySuggest` manually requests a suggestion at the cursor.
 
 ## Configuration
 
-Defaults:
+Most people only need to adjust a small number of options:
+
+- `debounce_ms` controls how quickly auto-suggestions appear.
+- `filetypes.allow` and `filetypes.deny` decide where Agentify runs.
+- `suggestion.multiline` and `suggestion.max_lines` control multi-line completions.
+- `codex.model`, `codex.effort`, and `codex.warmup_on_insert` control Codex behavior.
+- `logging.level` helps with troubleshooting.
+
+Full defaults live in [`lua/agentify/config.lua`](lua/agentify/config.lua).
+
+A more opinionated example:
 
 ```lua
 require("agentify").setup({
-  enabled = true,
-  provider = "codex",
-  debounce_ms = 175,
+  debounce_ms = 140,
   suggestion = {
-    min_chars = 3,
-    highlight = "Comment",
     multiline = true,
     max_lines = 4,
-    max_context_lines = {
-      before = 8,
-      after = 8,
-    },
-  },
-  local_suggestions = {
-    enabled = true,
-    min_chars = 3,
-    max_scan_lines = 400,
-    max_suffix_length = 80,
-  },
-  lsp = {
-    enabled = true,
-    min_chars = 2,
-    timeout_ms = 80,
-    max_completion_items = 8,
-    max_diagnostics = 3,
-  },
-  intent = {
-    enabled = true,
-    min_symbol_chars = 3,
-    min_word_chars = 3,
-    max_terms = 6,
-    max_open_buffers = 4,
-    max_related_lines = 8,
-  },
-  filetypes = {
-    allow = {
-      "bash",
-      "c",
-      "cpp",
-      "go",
-      "javascript",
-      "javascriptreact",
-      "json",
-      "lua",
-      "python",
-      "rust",
-      "sh",
-      "toml",
-      "typescript",
-      "typescriptreact",
-      "vim",
-      "yaml",
-      "zsh",
-    },
-    deny = {},
   },
   codex = {
-    command = { "codex", "app-server" },
-    model = nil,
     effort = "none",
-    service_tier = nil,
-    base_instructions = nil,
-    refresh_account_token = false,
     warmup_on_insert = true,
   },
   logging = {
     level = "warn",
-    max_entries = 200,
   },
 })
 ```
-
-## Behavior
-
-- automatic suggestions are debounced on `TextChangedI` and `TextChangedP`
-- auto suggestions build semantic intent from the current line, symbol names, parameters, and related open buffers before routing
-- definition-like lines prefer Codex over weak suffix completions, so named functions can produce meaningful bodies instead of only literal reuse
-- auto suggestions still try structural templates, fast local buffer reuse, and bounded LSP completions when those are the best fit
-- provisional templates like JS/TS arrow-function blocks can render immediately and then be upgraded by a richer Codex completion
-- manual trigger always goes through Codex
-- stale turns are ignored when the buffer changes, the cursor moves, or insert mode exits
-- multiline suggestions are allowed only when the cursor is at end-of-line
-- suggestions are rendered as inline ghost text, with trailing lines shown as virtual lines when needed
-- accept full, accept next word, and dismiss are exposed as Lua APIs
-- Codex is warmed on `InsertEnter` for enabled buffers to reduce first-request latency
 
 ## Troubleshooting
 
@@ -173,44 +137,34 @@ If `:AgentifyStatus` says the CLI is missing:
 codex app-server --help
 ```
 
-If it says authentication is missing:
+If authentication is missing:
 
 ```sh
 codex login
 ```
 
-If the transport starts but suggestions do not appear:
+If the transport is running but suggestions do not show up:
+
 - confirm the buffer filetype is allowlisted
 - confirm you are in insert mode
 - run `:AgentifySuggest` to bypass debounce
-- raise `logging.level = "debug"` and re-run `:AgentifyStatus`
-
-## Non-goals
-
-- tool use during completion turns
-- hidden auth flows or approval prompts while typing
-- support below Neovim `0.10`
-- multi-provider support in the first shipping milestone
+- set `logging.level = "debug"` and run `:AgentifyStatus` again
 
 ## Testing
-
-Run the unit suite:
 
 ```sh
 make test
 ```
 
-Run the headless smoke test:
+For a headless smoke run:
 
 ```sh
 nvim --headless -u tests/minimal_init.lua "+luafile scripts/smoke.lua"
 ```
 
-## Attribution
+## Project status
 
-`agentify.nvim` is being built and daily-driven by Ranveer Sequeira.
-
-Codex-backed completion depends on the local Codex CLI `app-server` runtime and the surrounding Neovim/LSP ecosystem. If you run into issues or want to improve the experience, open an issue or send a PR.
+`agentify.nvim` is actively developed and used day to day. Issues and PRs are welcome.
 
 ## License
 
