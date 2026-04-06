@@ -16,6 +16,8 @@ return {
       h.eq(120, opts.debounce_ms)
       h.eq({ "lua" }, opts.filetypes.allow)
       h.eq({ "markdown" }, opts.filetypes.deny)
+      h.eq(true, opts.lsp.enabled)
+      h.eq(2, opts.lsp.min_chars)
     end,
   },
   {
@@ -47,4 +49,3 @@ return {
     end,
   },
 }
-

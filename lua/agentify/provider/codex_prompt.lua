@@ -54,11 +54,21 @@ function M.build_completion_request(context, opts)
     block("CURRENT_LINE_PREFIX", context.line_prefix),
     block("CURRENT_LINE_SUFFIX", context.line_suffix),
     block("NEARBY_LINES_AFTER", context.after_lines),
-    "",
-    multiline_allowed
-      and "Return only the text to insert at the cursor. Do not repeat existing suffix text from later lines."
-      or "Return only the text to insert at the cursor.",
   }
+
+  if context.lsp then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = block("ATTACHED_LSP_CLIENTS", context.lsp.clients)
+    lines[#lines + 1] = block("CURRENT_LINE_DIAGNOSTICS", context.lsp.diagnostics)
+    if context.lsp.completions then
+      lines[#lines + 1] = block("LSP_COMPLETION_CANDIDATES", context.lsp.completions)
+    end
+  end
+
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = multiline_allowed
+      and "Return only the text to insert at the cursor. Do not repeat existing suffix text from later lines."
+      or "Return only the text to insert at the cursor."
 
   return table.concat(lines, "\n")
 end

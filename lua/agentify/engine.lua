@@ -1,10 +1,12 @@
 local actions = require("agentify.actions")
 local config = require("agentify.config")
 local context = require("agentify.context")
+local lsp = require("agentify.lsp")
 local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
 local render = require("agentify.render")
 local state = require("agentify.state")
+local template_suggest = require("agentify.template_suggest")
 
 local uv = vim.uv or vim.loop
 
@@ -131,6 +133,7 @@ function M.request(bufnr, request_opts)
     clear_buffer(bufnr, "invalid-context")
     return false, build_reason
   end
+  ctx.lsp = lsp.snapshot(bufnr, ctx.row, M.opts)
 
   if not request_opts.manual and not M.should_auto_trigger(ctx, M.opts) then
     clear_buffer(bufnr, "below-threshold")
@@ -142,23 +145,27 @@ function M.request(bufnr, request_opts)
   local buffer_state = state.get_buffer(bufnr)
 
   if not request_opts.manual then
-    local local_completion = local_suggest.suggest(bufnr, ctx, M.opts)
-    if local_completion then
+    local fast_completion = template_suggest.suggest(ctx, M.opts)
+      or local_suggest.suggest(bufnr, ctx, M.opts)
+      or lsp.suggest(bufnr, ctx, M.opts, function(text)
+        return context.sanitize_completion(ctx, text, M.opts)
+      end)
+    if fast_completion then
       buffer_state.suggestion = {
         bufnr = bufnr,
         row = ctx.row,
         col = ctx.col,
-        text = local_completion.text,
+        text = fast_completion.text,
         request_token = state.next_request(bufnr),
-        source = local_completion.source,
+        source = fast_completion.source,
       }
       render.show(bufnr, buffer_state.suggestion, M.opts)
-      log.debug("rendered local suggestion", {
+      log.debug("rendered fast suggestion", {
         bufnr = bufnr,
-        source = local_completion.source,
-        text = local_completion.text,
+        source = fast_completion.source,
+        text = fast_completion.text,
       })
-      return true, "local-suggestion"
+      return true, fast_completion.reason or fast_completion.source
     end
   end
 

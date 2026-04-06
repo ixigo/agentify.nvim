@@ -20,6 +20,13 @@ M.defaults = {
     max_scan_lines = 400,
     max_suffix_length = 80,
   },
+  lsp = {
+    enabled = true,
+    min_chars = 2,
+    timeout_ms = 80,
+    max_completion_items = 8,
+    max_diagnostics = 3,
+  },
   filetypes = {
     allow = {
       "bash",
@@ -146,6 +153,13 @@ function M.normalize(opts)
   expect_positive_integer("local_suggestions.min_chars", merged.local_suggestions.min_chars, true)
   expect_positive_integer("local_suggestions.max_scan_lines", merged.local_suggestions.max_scan_lines)
   expect_positive_integer("local_suggestions.max_suffix_length", merged.local_suggestions.max_suffix_length)
+
+  expect_type("lsp", merged.lsp, "table")
+  expect_type("lsp.enabled", merged.lsp.enabled, "boolean")
+  expect_positive_integer("lsp.min_chars", merged.lsp.min_chars, true)
+  expect_positive_integer("lsp.timeout_ms", merged.lsp.timeout_ms)
+  expect_positive_integer("lsp.max_completion_items", merged.lsp.max_completion_items)
+  expect_positive_integer("lsp.max_diagnostics", merged.lsp.max_diagnostics)
 
   expect_type("filetypes", merged.filetypes, "table")
   expect_string_list("filetypes.allow", merged.filetypes.allow)

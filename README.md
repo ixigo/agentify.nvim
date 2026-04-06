@@ -9,6 +9,8 @@ V1 is intentionally narrow:
 - plugin-managed local `stdio` child process
 - existing Codex CLI auth on the machine
 - stateless, context-only suggestions, with multiline only at end-of-line
+- LSP-aware fast suggestions when an attached language server can help
+- fast structural templates for common patterns like JS/TS arrow-function blocks, JS/TS `console.log(...)`, and Python/Lua `print(...)`
 - fast local buffer reuse for repeated identifiers and repeated lines
 - explicit status/setup commands instead of silent failure
 
@@ -86,6 +88,13 @@ require("agentify").setup({
     max_scan_lines = 400,
     max_suffix_length = 80,
   },
+  lsp = {
+    enabled = true,
+    min_chars = 2,
+    timeout_ms = 80,
+    max_completion_items = 8,
+    max_diagnostics = 3,
+  },
   filetypes = {
     allow = {
       "bash",
@@ -127,7 +136,7 @@ require("agentify").setup({
 ## Behavior
 
 - automatic suggestions are debounced on `TextChangedI` and `TextChangedP`
-- auto suggestions first try a fast local buffer completion for repeated identifiers and repeated lines
+- auto suggestions first try structural templates, then fast local buffer reuse, then bounded LSP completions, and finally Codex
 - manual trigger always goes through Codex
 - stale turns are ignored when the buffer changes, the cursor moves, or insert mode exits
 - multiline suggestions are allowed only when the cursor is at end-of-line

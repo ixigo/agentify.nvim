@@ -50,6 +50,7 @@ local function best_line_suffix(bufnr, ctx, opts)
             best = {
               text = candidate,
               source = "buffer-line",
+              reason = "local-suggestion",
               score = score,
             }
           end
@@ -110,6 +111,7 @@ local function best_word_suffix(bufnr, ctx, opts)
   return {
     text = best.text,
     source = "buffer-token",
+    reason = "local-suggestion",
   }
 end
 
