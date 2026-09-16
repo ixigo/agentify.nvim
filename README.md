@@ -34,9 +34,17 @@ a warm Claude or Codex session when the line needs real intent instead of simple
 - Supports full accept, word-by-word accept, line accept, dismiss, and manual trigger
 - Keeps the ghost text while you type through it, re-shows recent suggestions when you
   backspace, and prefetches the next one right after an accept
+- Hints at the likely next edit after an accept (the nearest diagnostic, a TODO, an empty
+  body) and jumps there on a keymap, without a model call
+- Predicts the follow-up edit after you change something, shown as strikethrough old text
+  plus the replacement, and applies it on accept
+- Remembers your recent edits and shows them to the model, so completions continue what you
+  were doing rather than guessing
 - Optimized for practical latency: instant local/template suggestions, sub-second model suggestions
   from a warm Haiku session, and a stronger model only when you ask for it
 - Optional Neovim `0.12` frontend that renders through the built-in `vim.lsp.inline_completion`
+- `:AgentifyFix` and `:AgentifyExplain` hand a diagnostic or a selection to Claude Code with
+  tools, streaming the transcript into a panel
 
 ## What it is good at
 
@@ -123,6 +131,10 @@ end)
 vim.keymap.set("i", "<M-]>", function()
   require("agentify").dismiss()
 end)
+
+vim.keymap.set({ "i", "n" }, "<M-j>", function()
+  require("agentify").jump()
+end)
 ```
 
 ## Daily usage
@@ -133,6 +145,12 @@ end)
 - Accept the first line of a multi-line suggestion with `require("agentify").accept_line()`.
 - Keep typing the suggested characters and the ghost text shortens instead of disappearing.
 - Backspace into a spot that already had a suggestion and it comes back instantly, without a model call.
+- After you change something and pause, a prediction may appear on another line: the old
+  text struck through and the replacement beside it with an `⇥ accept edit` tag. With no
+  ghost text at the cursor, `accept()` applies it; `accept_edit()` does so explicitly.
+  `dismiss()` clears it.
+- After an accept, a `⇣ next edit` hint may appear on a later line; `require("agentify").jump()`
+  moves the cursor there. `has_jump_hint()` lets a `<Tab>` mapping fall through when there is none.
 - Dismiss the current suggestion with `require("agentify").dismiss()`.
 - Use `:AgentifySuggest` to force a manual request. With Claude this uses the stronger
   `manual_model` (Sonnet by default); the first manual request boots that session, so expect a
@@ -149,6 +167,9 @@ end)
 - `:AgentifySuggest` manually requests a suggestion at the cursor. It bypasses the hourly
   budget but not a rate-limit cooldown.
 - `:AgentifyBudgetReset` clears the hourly request window and any cooldown.
+- `:AgentifyFix` fixes the diagnostic under the cursor with Claude Code (see below).
+- `:'<,'>AgentifyExplain` explains the selected lines; without a range it explains the cursor line.
+- `:AgentifyAgentCancel` stops a running fix or explain task.
 
 ## Configuration
 
@@ -169,6 +190,9 @@ Most people only need to adjust a small number of options:
 - `budget.max_requests_per_hour`, `budget.rate_limit_cooldown_s`, and `budget.fast_only` cap the model tier.
 - `paths.deny` lists files that never get suggestions or serve as context.
 - `repo_context.*` controls definitions and call sites pulled from the local Agentify index.
+- `jump.*` controls next-edit hints after an accept.
+- `agent.*` controls the model, tool sets, and panel for `:AgentifyFix` and `:AgentifyExplain`.
+- `edits.*` controls the recent-edits memory; `edit_prediction.*` controls follow-up edit predictions.
 - `logging.level` helps with troubleshooting.
 
 Full defaults live in [`lua/agentify/config.lua`](lua/agentify/config.lua).
@@ -220,13 +244,70 @@ Several behaviours make suggestions feel instant while spending nothing from you
 - **Adaptive debounce.** While a model request is in flight the debounce widens to
   `debounce_busy_ms`, so a fast burst of typing does not become a burst of interrupted turns.
 
+- **Next-edit hints.** After a full accept (or the last line of a multi-line accept) the
+  plugin looks up to `jump.max_distance` lines below the cursor for the nearest error or
+  warning diagnostic, then for placeholders such as `TODO`, `pass`, `...`, `{}`, or
+  "not implemented", and marks the first hit with a `⇣ next edit` label. If it is off-screen
+  the cursor line also gets a `↓ next edit at line N` pointer. The hint clears when you move to
+  another line or edit; `jump()` takes you there. Configure with `jump.*`.
+
 These apply to the default `extmark` frontend. With `frontend = "lsp"`, Neovim's own inline
 completion handles type-through and re-triggering; `accept_line()` and `accept_word()` still
 work through its `on_accept` hook.
 
+## Edit prediction
+
+Renaming a variable, changing a signature, or updating one call usually means the same
+change is due elsewhere. After an edit and a short pause (`edit_prediction.idle_ms`, 600 ms),
+Agentify sends your recent edits plus a window of `edit_prediction.window_lines` lines around
+the cursor to the model and asks for the single most likely follow-up edit as a
+`{line, old, new}` object. A valid answer is rendered in place:
+
+```text
+print(c̶o̶u̶n̶t̶)total  ⇥ accept edit
+```
+
+- The struck-through span uses `AgentifyEditOld`, the replacement `AgentifyEditNew`, and the
+  tag `AgentifyEditHint`; all three are default-linked highlights you can override.
+- `require("agentify").accept()` applies the prediction when there is no ghost text at the
+  cursor. `accept_edit()` always targets the prediction. After applying, the next prediction is
+  requested so a chain of matching edits can be accepted one keypress at a time.
+- Any other buffer change clears a stale prediction. Predictions never target the cursor line
+  and only run when the last edit is within `edit_prediction.max_edit_age_s`.
+- Each prediction is one model request and counts against the hourly budget. It is skipped
+  while ghost text is visible, and `edit_prediction.enabled = false` turns it off. Set
+  `edit_prediction.in_insert = false` to only predict after leaving insert mode.
+
+Recent edits are also included in normal completion prompts as `RECENT_EDITS` (the last
+`edits.prompt_entries`, within `edits.max_age_s`), which is what lets a completion continue a
+refactor instead of restarting it.
+
+## Fix and explain with tools
+
+Ghost text is where a chat model is weakest; tools are where Claude Code is strongest. Two
+commands use that side directly. Each starts a fresh `claude -p` in the project root (the
+nearest `.git` directory) with a small tool set and streams the transcript into a bottom panel
+(`q` closes it).
+
+- **`:AgentifyFix`** collects the diagnostics on the cursor line, saves the buffer, and asks
+  Claude to make the smallest correct change with `Read`, `Edit`, `Grep`, and `Glob`. Edits are
+  auto-accepted inside the project root only; no shell access is granted. When the run finishes
+  the buffer reloads from disk and the one-line summary appears as a notification.
+- **`:AgentifyExplain`** sends the visual selection (or the current line) with `Read`, `Grep`,
+  and `Glob` available for looking up referenced symbols. It never gets the `Edit` tool.
+
+```lua
+vim.keymap.set("n", "<leader>af", function() require("agentify").fix() end)
+vim.keymap.set({ "n", "v" }, "<leader>ae", function() require("agentify").explain() end)
+```
+
+Both use `agent.model` (Sonnet by default), respect a rate-limit cooldown, bypass the hourly
+inline budget because they are deliberate, and count under "agent" in `:AgentifyStatus`. They
+always use the Claude CLI regardless of the inline `provider` setting.
+
 ## Repo-aware context
 
-When a project has been indexed with the [Agentify](https://www.npmjs.com/package/agentify)
+When a project has been indexed with the [Agentify](https://ixigo.github.io/agentify/)
 CLI (`agentify scan` creates `.agentify/index.db`), the model prompt gains two extra blocks
 for the identifiers near your cursor:
 

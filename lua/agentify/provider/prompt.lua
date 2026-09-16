@@ -41,7 +41,41 @@ function M.base_instructions(opts, provider_opts)
   return table.concat(lines, "\n")
 end
 
+-- Edit prediction request: the reply must be one JSON object, or {} when unsure.
+function M.build_edit_request(context, opts)
+  local window = context.window or { start_row = 0, lines = {} }
+  local numbered = {}
+  for index, line in ipairs(window.lines) do
+    numbered[#numbered + 1] = ("%d: %s"):format(window.start_row + index, line)
+  end
+
+  local lines = {
+    "This is an EDIT PREDICTION request, not a completion.",
+    "The user just made the edits below. Predict the single most likely next edit they will make",
+    "elsewhere in the window, such as applying the same rename to another occurrence or updating a matching call.",
+    "",
+    ("FILEPATH: %s"):format(context.filepath ~= "" and context.filepath or "[No Name]"),
+    ("FILETYPE: %s"):format(context.filetype ~= "" and context.filetype or "plain"),
+    ("CURSOR_LINE: %d"):format(context.row + 1),
+    "",
+    block("RECENT_EDITS", context.recent_edits or {}),
+    "",
+    block("BUFFER_WINDOW", numbered),
+    "",
+    "Reply with exactly one JSON object on a single line and nothing else:",
+    '{"line": <line number from the window>, "old": "<exact text on that line to replace>", "new": "<replacement text>"}',
+    "Rules: \"old\" must be a non-empty exact substring of that line; the line must not be the cursor line;",
+    "\"new\" must differ from \"old\"; keep the edit on one line. If there is no confident edit, reply {}.",
+  }
+
+  return table.concat(lines, "\n")
+end
+
 function M.build_completion_request(context, opts)
+  if context.mode == "edit" then
+    return M.build_edit_request(context, opts)
+  end
+
   local multiline_allowed = opts.suggestion.multiline and context.line_suffix == ""
   local lines = {
     multiline_allowed and "Complete from the cursor and you may continue onto the next lines."
@@ -79,6 +113,11 @@ function M.build_completion_request(context, opts)
     if context.intent.related_lines then
       lines[#lines + 1] = block("RELATED_BUFFER_LINES", context.intent.related_lines)
     end
+  end
+
+  if context.recent_edits and #context.recent_edits > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = block("RECENT_EDITS", context.recent_edits)
   end
 
   if context.repo and context.repo.symbols and #context.repo.symbols > 0 then

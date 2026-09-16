@@ -71,6 +71,35 @@ M.defaults = {
     },
     deny = {},
   },
+  edits = {
+    -- Remember what the user recently changed; shown to the model as RECENT_EDITS.
+    enabled = true,
+    max_edits = 8,
+    max_age_s = 180,
+    prompt_entries = 5,
+    coalesce_s = 5,
+  },
+  edit_prediction = {
+    -- After an edit, ask the model for the most likely follow-up edit elsewhere in the
+    -- window and show it as strikethrough old text plus ghost new text.
+    enabled = true,
+    idle_ms = 600,
+    window_lines = 30,
+    -- Only predict when the last edit is this recent.
+    max_edit_age_s = 60,
+    in_insert = true,
+    hint = "accept edit",
+  },
+  jump = {
+    -- After an accept, hint at the likely next edit (nearest diagnostic below the cursor,
+    -- or a TODO / empty body / empty block). Model-free.
+    enabled = true,
+    max_distance = 40,
+    diagnostics = true,
+    max_severity = vim.diagnostic.severity.WARN,
+    placeholders = true,
+    highlight = "DiagnosticVirtualTextHint",
+  },
   repo_context = {
     -- Pull definitions and call sites for identifiers near the cursor from the local
     -- Agentify index (`agentify scan`) into the model prompt.
@@ -85,6 +114,17 @@ M.defaults = {
     process_timeout_ms = 4000,
     cache_ttl_s = 120,
     max_cache_entries = 64,
+  },
+  agent = {
+    -- :AgentifyFix and :AgentifyExplain run a fresh `claude -p` with tools in the project
+    -- root. They bypass the hourly budget (they are deliberate) but respect a cooldown.
+    model = "sonnet",
+    effort = "medium",
+    max_turns = 12,
+    panel_height = 12,
+    fix = { tools = { "Read", "Edit", "Grep", "Glob" } },
+    explain = { tools = { "Read", "Grep", "Glob" } },
+    extra_args = {},
   },
   budget = {
     -- Model requests allowed per rolling hour across all buffers; 0 disables the cap.
@@ -363,6 +403,29 @@ function M.normalize(opts)
   expect_string_list("filetypes.allow", merged.filetypes.allow)
   expect_string_list("filetypes.deny", merged.filetypes.deny)
 
+  expect_type("edits", merged.edits, "table")
+  expect_type("edits.enabled", merged.edits.enabled, "boolean")
+  expect_positive_integer("edits.max_edits", merged.edits.max_edits)
+  expect_positive_integer("edits.max_age_s", merged.edits.max_age_s)
+  expect_positive_integer("edits.prompt_entries", merged.edits.prompt_entries)
+  expect_positive_integer("edits.coalesce_s", merged.edits.coalesce_s, true)
+
+  expect_type("edit_prediction", merged.edit_prediction, "table")
+  expect_type("edit_prediction.enabled", merged.edit_prediction.enabled, "boolean")
+  expect_positive_integer("edit_prediction.idle_ms", merged.edit_prediction.idle_ms)
+  expect_positive_integer("edit_prediction.window_lines", merged.edit_prediction.window_lines)
+  expect_positive_integer("edit_prediction.max_edit_age_s", merged.edit_prediction.max_edit_age_s)
+  expect_type("edit_prediction.in_insert", merged.edit_prediction.in_insert, "boolean")
+  expect_type("edit_prediction.hint", merged.edit_prediction.hint, "string")
+
+  expect_type("jump", merged.jump, "table")
+  expect_type("jump.enabled", merged.jump.enabled, "boolean")
+  expect_positive_integer("jump.max_distance", merged.jump.max_distance)
+  expect_type("jump.diagnostics", merged.jump.diagnostics, "boolean")
+  expect_positive_integer("jump.max_severity", merged.jump.max_severity)
+  expect_type("jump.placeholders", merged.jump.placeholders, "boolean")
+  expect_type("jump.highlight", merged.jump.highlight, "string")
+
   expect_type("repo_context", merged.repo_context, "table")
   expect_type("repo_context.enabled", merged.repo_context.enabled, "boolean")
   merged.repo_context.command = normalize_command("repo_context.command", merged.repo_context.command)
@@ -374,6 +437,17 @@ function M.normalize(opts)
   expect_positive_integer("repo_context.process_timeout_ms", merged.repo_context.process_timeout_ms)
   expect_positive_integer("repo_context.cache_ttl_s", merged.repo_context.cache_ttl_s)
   expect_positive_integer("repo_context.max_cache_entries", merged.repo_context.max_cache_entries)
+
+  expect_type("agent", merged.agent, "table")
+  expect_type("agent.model", merged.agent.model, "string")
+  expect_optional_string("agent.effort", merged.agent.effort)
+  expect_positive_integer("agent.max_turns", merged.agent.max_turns)
+  expect_positive_integer("agent.panel_height", merged.agent.panel_height)
+  expect_type("agent.fix", merged.agent.fix, "table")
+  expect_string_list("agent.fix.tools", merged.agent.fix.tools)
+  expect_type("agent.explain", merged.agent.explain, "table")
+  expect_string_list("agent.explain.tools", merged.agent.explain.tools)
+  expect_string_list("agent.extra_args", merged.agent.extra_args)
 
   expect_type("budget", merged.budget, "table")
   expect_positive_integer("budget.max_requests_per_hour", merged.budget.max_requests_per_hour, true)

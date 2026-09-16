@@ -55,6 +55,15 @@ function M.setup(opts)
     reset_budget = function()
       return engine.reset_budget()
     end,
+    fix = function()
+      return M.fix()
+    end,
+    explain = function(first, last)
+      return M.explain(first, last)
+    end,
+    cancel_agent = function()
+      return require("agentify.agent").cancel()
+    end,
   })
 
   M._setup_complete = true
@@ -80,6 +89,31 @@ function M.accept_line()
   return engine.accept_line(0)
 end
 
+function M.accept_edit()
+  ensure_setup()
+  return engine.accept_edit(0)
+end
+
+function M.has_edit_prediction()
+  ensure_setup()
+  return engine.has_edit_prediction(0)
+end
+
+function M.predict_edit()
+  ensure_setup()
+  return engine.predict_edit(0)
+end
+
+function M.jump()
+  ensure_setup()
+  return engine.jump(0)
+end
+
+function M.has_jump_hint()
+  ensure_setup()
+  return engine.has_jump_hint(0)
+end
+
 function M.dismiss()
   ensure_setup()
   return engine.dismiss(0)
@@ -88,6 +122,21 @@ end
 function M.has_suggestion()
   ensure_setup()
   return engine.has_suggestion(0)
+end
+
+function M.fix()
+  ensure_setup()
+  return require("agentify.agent").fix(M.opts, 0)
+end
+
+function M.explain(first, last)
+  ensure_setup()
+  return require("agentify.agent").explain(M.opts, 0, first, last)
+end
+
+function M.cancel_agent()
+  ensure_setup()
+  return require("agentify.agent").cancel()
 end
 
 function M.reset_budget()

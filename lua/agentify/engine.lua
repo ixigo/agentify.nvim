@@ -2,7 +2,10 @@ local actions = require("agentify.actions")
 local budget = require("agentify.budget")
 local config = require("agentify.config")
 local context = require("agentify.context")
+local edit_predict = require("agentify.edit_predict")
+local edits = require("agentify.edits")
 local intent = require("agentify.intent")
+local jump = require("agentify.jump")
 local lsp = require("agentify.lsp")
 local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
@@ -220,6 +223,27 @@ function M.debounce_delay(bufnr)
   return M.opts.debounce_ms
 end
 
+-- Shows a next-edit hint for the cursor position, used after an accept.
+function M.hint_next_edit(bufnr)
+  if not M.opts.jump.enabled then
+    return
+  end
+
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_get_current_buf() == bufnr then
+      jump.suggest(bufnr, M.opts.jump)
+    end
+  end)
+end
+
+function M.jump(bufnr)
+  return jump.jump(resolve_bufnr(bufnr))
+end
+
+function M.has_jump_hint(bufnr)
+  return jump.has(resolve_bufnr(bufnr))
+end
+
 -- Asks for the next suggestion right away, used after an accept.
 function M.prefetch(bufnr)
   if not M.opts.prefetch_after_accept then
@@ -303,8 +327,153 @@ function M.build_context(bufnr, manual)
   ctx.lsp = lsp.snapshot(bufnr, ctx.row, M.opts)
   ctx.intent = intent.analyze(bufnr, ctx, M.opts)
   ctx.manual = manual == true
+  if M.opts.edits.enabled then
+    ctx.recent_edits = edits.describe(bufnr, M.opts.edits.prompt_entries, M.opts.edits.max_age_s)
+  end
 
   return ctx, nil
+end
+
+------------------------------------------------------------------------------------------
+-- Edit prediction
+------------------------------------------------------------------------------------------
+
+function M.cancel_edit_prediction(bufnr, reason)
+  local buffer_state = state.get_buffer(bufnr)
+  local active = buffer_state.edit_request
+  if not active then
+    return false
+  end
+  buffer_state.edit_request = nil
+  if active.handle and active.handle.cancel then
+    active.handle.cancel(reason or "cancelled")
+  end
+  return true
+end
+
+-- Asks the provider for the most likely follow-up edit and renders it.
+function M.predict_edit(bufnr)
+  bufnr = resolve_bufnr(bufnr)
+  local popts = M.opts.edit_prediction
+  if not popts.enabled or not buffer_eligible(bufnr) then
+    return false, "disabled"
+  end
+
+  if vim.api.nvim_get_current_buf() ~= bufnr then
+    return false, "buffer not current"
+  end
+
+  local mode = vim.api.nvim_get_mode().mode
+  if mode:match("^i") and not popts.in_insert then
+    return false, "insert mode"
+  end
+
+  -- Never compete with visible ghost text at the cursor.
+  if state.get_buffer(bufnr).suggestion then
+    return false, "suggestion visible"
+  end
+
+  local recent = edits.recent(bufnr, popts.max_edit_age_s)
+  if #recent == 0 then
+    return false, "no recent edits"
+  end
+
+  M.cancel_edit_prediction(bufnr, "superseded")
+
+  local ctx = context.build(bufnr, M.opts)
+  if not ctx then
+    return false, "no context"
+  end
+  ctx.mode = "edit"
+  ctx.manual = false
+  ctx.recent_edits = edits.describe(bufnr, M.opts.edits.prompt_entries, M.opts.edits.max_age_s)
+  ctx.window = edit_predict.window(bufnr, ctx.row, popts)
+
+  local allowed, reason = M.provider_allowed(false)
+  if not allowed then
+    return false, "provider skipped: " .. reason
+  end
+
+  local changedtick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local buffer_state = state.get_buffer(bufnr)
+  local request = { handle = nil, changedtick = changedtick }
+  buffer_state.edit_request = request
+
+  request.handle = M.provider:complete(ctx, function(event)
+    vim.schedule(function()
+      if buffer_state.edit_request ~= request then
+        return
+      end
+
+      if event.type == "error" then
+        buffer_state.edit_request = nil
+        M.note_provider_error(event.error)
+        log.debug("edit prediction error", { error = event.error })
+        return
+      end
+
+      if event.type ~= "completed" then
+        return
+      end
+
+      buffer_state.edit_request = nil
+      if not vim.api.nvim_buf_is_valid(bufnr) or vim.api.nvim_buf_get_changedtick(bufnr) ~= changedtick then
+        return
+      end
+
+      local prediction = edit_predict.parse(event.text, ctx)
+      if prediction then
+        M.budget:count("edit_prediction")
+        edit_predict.show(bufnr, prediction, popts)
+      else
+        log.debug("edit prediction returned nothing usable", { text = event.text })
+      end
+    end)
+  end)
+
+  return true, nil
+end
+
+function M.schedule_edit_prediction(bufnr)
+  bufnr = resolve_bufnr(bufnr)
+  if not M.opts.edit_prediction.enabled then
+    return
+  end
+
+  local buffer_state = state.get_buffer(bufnr)
+  if not buffer_state.edit_timer then
+    buffer_state.edit_timer = uv.new_timer()
+  end
+
+  buffer_state.edit_timer:stop()
+  buffer_state.edit_timer:start(M.opts.edit_prediction.idle_ms, 0, vim.schedule_wrap(function()
+    M.predict_edit(bufnr)
+  end))
+end
+
+function M.accept_edit(bufnr)
+  bufnr = resolve_bufnr(bufnr)
+  M.cancel_edit_prediction(bufnr, "accepted")
+  local applied = edit_predict.accept(bufnr, function(target)
+    -- our own change: keep it out of the recent-edits memory and suggestion flow
+    edits.suppress_next(target, 1)
+    state.get_buffer(target).suppress_text_changed = true
+  end)
+  if applied then
+    M.budget:count("edit_accepted")
+    M.schedule_edit_prediction(bufnr)
+  end
+  return applied
+end
+
+function M.has_edit_prediction(bufnr)
+  return edit_predict.has(resolve_bufnr(bufnr))
+end
+
+function M.dismiss_edit(bufnr)
+  bufnr = resolve_bufnr(bufnr)
+  M.cancel_edit_prediction(bufnr, "dismissed")
+  return edit_predict.clear(bufnr)
 end
 
 -- Runs the zero-latency tier (templates, buffer reuse, LSP items).
@@ -599,14 +768,26 @@ end
 
 function M.accept(bufnr)
   bufnr = resolve_bufnr(bufnr)
+  if not actions.get(bufnr) and edit_predict.has(bufnr) and not (M.frontend == "lsp" and inline_lsp().has_suggestion(bufnr)) then
+    return M.accept_edit(bufnr)
+  end
+
   if M.frontend == "lsp" then
-    return inline_lsp().accept(bufnr)
+    local accepted = inline_lsp().accept(bufnr)
+    if accepted then
+      -- Neovim applies the accept on the next tick; hint after it lands.
+      vim.defer_fn(function()
+        M.hint_next_edit(bufnr)
+      end, 20)
+    end
+    return accepted
   end
 
   M.cancel_request(bufnr, "accepted")
   local accepted = actions.accept(bufnr)
   if accepted then
     M.prefetch(bufnr)
+    M.hint_next_edit(bufnr)
   end
 
   return accepted
@@ -641,6 +822,7 @@ local function accept_fragment(bufnr, fragment_of, reason)
     })
   else
     M.prefetch(bufnr)
+    M.hint_next_edit(bufnr)
   end
 
   return true
@@ -666,8 +848,9 @@ end
 
 function M.dismiss(bufnr)
   bufnr = resolve_bufnr(bufnr)
+  local had_edit = M.dismiss_edit(bufnr)
   if M.frontend == "lsp" then
-    return inline_lsp().dismiss(bufnr)
+    return inline_lsp().dismiss(bufnr) or had_edit
   end
 
   M.cancel_request(bufnr, "dismissed")
@@ -782,6 +965,58 @@ function M.setup(opts, provider)
     })
   end
 
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = group,
+    callback = function(args)
+      jump.on_cursor_moved(args.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = group,
+    callback = function(args)
+      local buffer_state = state.get_buffer(args.buf)
+      if not buffer_state.suppress_text_changed and jump.has(args.buf) then
+        jump.clear(args.buf)
+      end
+
+      -- The buffer moved on: a pending or visible prediction is stale, and a new
+      -- one becomes due once the user pauses.
+      if not buffer_state.suppress_text_changed then
+        M.cancel_edit_prediction(args.buf, "text-changed")
+        edit_predict.clear(args.buf)
+        if buffer_eligible(args.buf) then
+          M.schedule_edit_prediction(args.buf)
+        end
+      end
+    end,
+  })
+
+  -- Track edits for RECENT_EDITS and edit prediction.
+  if opts.edits.enabled then
+    vim.api.nvim_create_autocmd({ "BufEnter", "FileType" }, {
+      group = group,
+      callback = function(args)
+        if buffer_eligible(args.buf) then
+          edits.attach(args.buf, opts.edits)
+        end
+      end,
+    })
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(bufnr) and buffer_eligible(bufnr) then
+        edits.attach(bufnr, opts.edits)
+      end
+    end
+  end
+
+  vim.api.nvim_create_autocmd("BufLeave", {
+    group = group,
+    callback = function(args)
+      M.cancel_edit_prediction(args.buf, "buf-leave")
+      edit_predict.clear(args.buf)
+    end,
+  })
+
   vim.api.nvim_create_autocmd("InsertEnter", {
     group = group,
     callback = function(args)
@@ -806,6 +1041,8 @@ function M.setup(opts, provider)
     group = group,
     callback = function(args)
       recall.clear(args.buf)
+      jump.clear(args.buf)
+      edit_predict.clear(args.buf)
       state.destroy_buffer(args.buf)
     end,
   })
