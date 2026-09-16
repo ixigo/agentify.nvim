@@ -2,7 +2,9 @@ local M = {}
 
 M.defaults = {
   enabled = true,
-  provider = "codex",
+  provider = "auto",
+  frontend = "extmark",
+  warmup_on_insert = true,
   debounce_ms = 175,
   suggestion = {
     min_chars = 3,
@@ -57,14 +59,32 @@ M.defaults = {
     },
     deny = {},
   },
-  codex = {
-    command = { "codex", "app-server" },
-    model = nil,
-    effort = "none",
-    service_tier = nil,
-    base_instructions = nil,
-    refresh_account_token = false,
-    warmup_on_insert = true,
+  auth = {
+    -- Only use hour-based subscription sessions (claude.ai login, ChatGPT login).
+    -- API-key billing is refused and API-key environment variables are stripped
+    -- from every CLI process the plugin spawns.
+    subscription_only = true,
+    strip_env = { "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY" },
+  },
+  providers = {
+    codex = {
+      command = { "codex", "app-server" },
+      model = nil,
+      effort = "none",
+      service_tier = nil,
+      base_instructions = nil,
+      refresh_account_token = false,
+    },
+    claude = {
+      command = { "claude" },
+      model = "haiku",
+      manual_model = "sonnet",
+      effort = "low",
+      max_session_turns = 40,
+      min_version = "2.0.0",
+      extra_args = {},
+      base_instructions = nil,
+    },
   },
   logging = {
     level = "warn",
@@ -72,11 +92,24 @@ M.defaults = {
   },
 }
 
+M.provider_names = { "claude", "codex" }
+
 local valid_log_levels = {
   error = true,
   warn = true,
   info = true,
   debug = true,
+}
+
+local valid_providers = {
+  auto = true,
+  codex = true,
+  claude = true,
+}
+
+local valid_frontends = {
+  extmark = true,
+  lsp = true,
 }
 
 local function is_list(value)
@@ -107,6 +140,12 @@ local function expect_type(name, value, expected)
   end
 end
 
+local function expect_optional_string(name, value)
+  if value ~= nil then
+    expect_type(name, value, "string")
+  end
+end
+
 local function expect_positive_integer(name, value, allow_zero)
   expect_type(name, value, "number")
 
@@ -127,24 +166,94 @@ local function expect_string_list(name, value)
   end
 end
 
-local function normalize_command(command)
+local function normalize_command(name, command)
   if type(command) == "string" then
     return { command }
   end
 
-  expect_string_list("codex.command", command)
+  expect_string_list(name, command)
+
+  if #command == 0 then
+    error(("agentify.nvim: %s must not be empty"):format(name))
+  end
 
   return command
+end
+
+-- Older configs put Codex options under a top-level `codex` table. Fold them into
+-- `providers.codex` and lift `codex.warmup_on_insert` to the top level.
+local function migrate_legacy(opts)
+  local deprecations = {}
+
+  if type(opts.codex) ~= "table" then
+    return opts, deprecations
+  end
+
+  opts = vim.deepcopy(opts)
+  local legacy = opts.codex
+  opts.codex = nil
+  opts.providers = opts.providers or {}
+  opts.providers.codex = opts.providers.codex or {}
+
+  for key, value in pairs(legacy) do
+    if key == "warmup_on_insert" then
+      if opts.warmup_on_insert == nil then
+        opts.warmup_on_insert = value
+      end
+    elseif opts.providers.codex[key] == nil then
+      opts.providers.codex[key] = value
+    end
+  end
+
+  table.insert(
+    deprecations,
+    "`codex = {...}` moved to `providers.codex = {...}`; `codex.warmup_on_insert` is now top-level `warmup_on_insert`."
+  )
+
+  return opts, deprecations
+end
+
+local function validate_codex(codex)
+  expect_type("providers.codex", codex, "table")
+  codex.command = normalize_command("providers.codex.command", codex.command)
+  expect_optional_string("providers.codex.model", codex.model)
+  expect_optional_string("providers.codex.effort", codex.effort)
+  expect_optional_string("providers.codex.service_tier", codex.service_tier)
+  expect_optional_string("providers.codex.base_instructions", codex.base_instructions)
+  expect_type("providers.codex.refresh_account_token", codex.refresh_account_token, "boolean")
+end
+
+local function validate_claude(claude)
+  expect_type("providers.claude", claude, "table")
+  claude.command = normalize_command("providers.claude.command", claude.command)
+  expect_type("providers.claude.model", claude.model, "string")
+  expect_optional_string("providers.claude.manual_model", claude.manual_model)
+  expect_optional_string("providers.claude.effort", claude.effort)
+  expect_positive_integer("providers.claude.max_session_turns", claude.max_session_turns)
+  expect_type("providers.claude.min_version", claude.min_version, "string")
+  expect_string_list("providers.claude.extra_args", claude.extra_args)
+  expect_optional_string("providers.claude.base_instructions", claude.base_instructions)
 end
 
 function M.normalize(opts)
   opts = opts or {}
   expect_type("setup options", opts, "table")
 
+  local deprecations
+  opts, deprecations = migrate_legacy(opts)
+
   local merged = merge_tables(M.defaults, opts)
 
   expect_type("enabled", merged.enabled, "boolean")
   expect_type("provider", merged.provider, "string")
+  if not valid_providers[merged.provider] then
+    error(("agentify.nvim: provider must be one of auto, claude, codex; got %q"):format(tostring(merged.provider)))
+  end
+  expect_type("frontend", merged.frontend, "string")
+  if not valid_frontends[merged.frontend] then
+    error(("agentify.nvim: frontend must be one of extmark, lsp; got %q"):format(tostring(merged.frontend)))
+  end
+  expect_type("warmup_on_insert", merged.warmup_on_insert, "boolean")
   expect_positive_integer("debounce_ms", merged.debounce_ms)
 
   expect_type("suggestion", merged.suggestion, "table")
@@ -181,28 +290,21 @@ function M.normalize(opts)
   expect_string_list("filetypes.allow", merged.filetypes.allow)
   expect_string_list("filetypes.deny", merged.filetypes.deny)
 
-  expect_type("codex", merged.codex, "table")
-  merged.codex.command = normalize_command(merged.codex.command)
-  if merged.codex.model ~= nil then
-    expect_type("codex.model", merged.codex.model, "string")
-  end
-  if merged.codex.effort ~= nil then
-    expect_type("codex.effort", merged.codex.effort, "string")
-  end
-  if merged.codex.service_tier ~= nil then
-    expect_type("codex.service_tier", merged.codex.service_tier, "string")
-  end
-  if merged.codex.base_instructions ~= nil then
-    expect_type("codex.base_instructions", merged.codex.base_instructions, "string")
-  end
-  expect_type("codex.refresh_account_token", merged.codex.refresh_account_token, "boolean")
-  expect_type("codex.warmup_on_insert", merged.codex.warmup_on_insert, "boolean")
+  expect_type("auth", merged.auth, "table")
+  expect_type("auth.subscription_only", merged.auth.subscription_only, "boolean")
+  expect_string_list("auth.strip_env", merged.auth.strip_env)
+
+  expect_type("providers", merged.providers, "table")
+  validate_codex(merged.providers.codex)
+  validate_claude(merged.providers.claude)
 
   expect_type("logging", merged.logging, "table")
   if not valid_log_levels[merged.logging.level] then
     error(("agentify.nvim: logging.level must be one of error, warn, info, debug; got %q"):format(tostring(merged.logging.level)))
   end
   expect_positive_integer("logging.max_entries", merged.logging.max_entries)
+
+  merged.deprecations = deprecations
 
   return merged
 end

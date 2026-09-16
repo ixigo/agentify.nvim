@@ -5,7 +5,7 @@ local h = require("tests.helpers")
 local local_suggest = require("agentify.local_suggest")
 local state = require("agentify.state")
 
-local fixture_path = "/Users/ranveer.kumar/Personal/agentify-nvim/tests/fixtures/pnr_status_mweb_excerpt.tsx"
+local fixture_path = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h") .. "/fixtures/pnr_status_mweb_excerpt.tsx"
 
 local function with_fixture(callback)
   local lines = vim.fn.readfile(fixture_path)

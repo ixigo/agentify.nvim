@@ -50,4 +50,55 @@ return {
       end)
     end,
   },
+  {
+    name = "defaults to the auto provider with subscription-only auth",
+    fn = function()
+      local opts = config.normalize({})
+
+      h.eq("auto", opts.provider)
+      h.eq("extmark", opts.frontend)
+      h.eq(true, opts.warmup_on_insert)
+      h.eq(true, opts.auth.subscription_only)
+      h.eq({ "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY" }, opts.auth.strip_env)
+      h.eq({ "claude" }, opts.providers.claude.command)
+      h.eq("haiku", opts.providers.claude.model)
+      h.eq("sonnet", opts.providers.claude.manual_model)
+      h.eq(40, opts.providers.claude.max_session_turns)
+      h.eq({ "codex", "app-server" }, opts.providers.codex.command)
+      h.eq({}, opts.deprecations)
+    end,
+  },
+  {
+    name = "migrates the legacy codex table into providers.codex",
+    fn = function()
+      local opts = config.normalize({
+        codex = {
+          model = "gpt-5-codex",
+          warmup_on_insert = false,
+        },
+      })
+
+      h.eq("gpt-5-codex", opts.providers.codex.model)
+      h.eq(false, opts.warmup_on_insert)
+      h.eq(nil, opts.codex)
+      h.eq(1, #opts.deprecations)
+      h.match("providers.codex", opts.deprecations[1])
+    end,
+  },
+  {
+    name = "rejects unknown providers and frontends",
+    fn = function()
+      local ok, err = pcall(config.normalize, { provider = "copilot" })
+      h.eq(false, ok)
+      h.match("provider must be one of", err)
+
+      local ok_frontend, err_frontend = pcall(config.normalize, { frontend = "popup" })
+      h.eq(false, ok_frontend)
+      h.match("frontend must be one of", err_frontend)
+
+      local ok_cmd, err_cmd = pcall(config.normalize, { providers = { claude = { command = {} } } })
+      h.eq(false, ok_cmd)
+      h.match("providers.claude.command", err_cmd)
+    end,
+  },
 }

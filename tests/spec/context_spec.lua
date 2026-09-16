@@ -20,6 +20,7 @@ return {
       }, function(bufnr)
         vim.bo[bufnr].filetype = "lua"
         local line = "local prefix = foo"
+        vim.cmd("startinsert")
         vim.api.nvim_win_set_cursor(0, { 1, #line })
 
         local ctx = context.build(bufnr, opts)
