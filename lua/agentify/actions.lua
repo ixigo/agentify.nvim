@@ -67,6 +67,22 @@ local function apply_suggestion(bufnr, text)
   return true
 end
 
+-- First line of a suggestion. A suggestion that starts with a line break yields the
+-- break plus the following line, so "accept line" always inserts something visible.
+function M.first_line_fragment(text)
+  local lines = split_inserted_lines(text)
+  if lines[1] ~= "" or #lines == 1 then
+    return lines[1]
+  end
+
+  return "\n" .. lines[2]
+end
+
+-- Inserts `text` at the current suggestion position and clears the suggestion.
+function M.apply(bufnr, text)
+  return apply_suggestion(resolve_bufnr(bufnr), text)
+end
+
 function M.get(bufnr)
   bufnr = resolve_bufnr(bufnr)
   return state.get_buffer(bufnr).suggestion
@@ -94,6 +110,16 @@ function M.accept_word(bufnr)
   end
 
   return apply_suggestion(bufnr, M.next_word_fragment(suggestion.text))
+end
+
+function M.accept_line(bufnr)
+  bufnr = resolve_bufnr(bufnr)
+  local suggestion = M.get(bufnr)
+  if not suggestion then
+    return false
+  end
+
+  return apply_suggestion(bufnr, M.first_line_fragment(suggestion.text))
 end
 
 function M.dismiss(bufnr)

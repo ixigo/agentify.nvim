@@ -72,6 +72,11 @@ function M.accept_word()
   return engine.accept_word(0)
 end
 
+function M.accept_line()
+  ensure_setup()
+  return engine.accept_line(0)
+end
+
 function M.dismiss()
   ensure_setup()
   return engine.dismiss(0)

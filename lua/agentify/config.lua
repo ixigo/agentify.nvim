@@ -6,6 +6,18 @@ M.defaults = {
   frontend = "extmark",
   warmup_on_insert = true,
   debounce_ms = 175,
+  -- Used instead of debounce_ms while a provider request is already in flight, so a
+  -- burst of keystrokes does not turn into a burst of interrupted model turns.
+  debounce_busy_ms = 320,
+  -- Typing the characters of the visible ghost text shortens it instead of dismissing it.
+  type_through = true,
+  -- Request the next suggestion right after a full accept instead of waiting for a keystroke.
+  prefetch_after_accept = true,
+  recall = {
+    -- Re-show a recent suggestion instantly when backspacing into a prefix that had one.
+    enabled = true,
+    max_entries = 16,
+  },
   suggestion = {
     min_chars = 3,
     highlight = "Comment",
@@ -255,6 +267,12 @@ function M.normalize(opts)
   end
   expect_type("warmup_on_insert", merged.warmup_on_insert, "boolean")
   expect_positive_integer("debounce_ms", merged.debounce_ms)
+  expect_positive_integer("debounce_busy_ms", merged.debounce_busy_ms)
+  expect_type("type_through", merged.type_through, "boolean")
+  expect_type("prefetch_after_accept", merged.prefetch_after_accept, "boolean")
+  expect_type("recall", merged.recall, "table")
+  expect_type("recall.enabled", merged.recall.enabled, "boolean")
+  expect_positive_integer("recall.max_entries", merged.recall.max_entries)
 
   expect_type("suggestion", merged.suggestion, "table")
   expect_positive_integer("suggestion.min_chars", merged.suggestion.min_chars, true)
