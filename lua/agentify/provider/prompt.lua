@@ -81,6 +81,28 @@ function M.build_completion_request(context, opts)
     end
   end
 
+  if context.repo and context.repo.symbols and #context.repo.symbols > 0 then
+    local definitions = {}
+    local references = {}
+    for _, entry in ipairs(context.repo.symbols) do
+      if entry.definition and #entry.definition.lines > 0 then
+        definitions[#definitions + 1] = ("-- %s (%s:%d)"):format(entry.name, entry.definition.file, entry.definition.start_line)
+        vim.list_extend(definitions, entry.definition.lines)
+      end
+      for _, ref in ipairs(entry.references or {}) do
+        references[#references + 1] = ("%s:%d: %s"):format(ref.file, ref.line, ref.text)
+      end
+    end
+
+    lines[#lines + 1] = ""
+    if #definitions > 0 then
+      lines[#lines + 1] = block("REPO_DEFINITIONS", definitions)
+    end
+    if #references > 0 then
+      lines[#lines + 1] = block("REPO_CALL_SITES", references)
+    end
+  end
+
   lines[#lines + 1] = ""
   lines[#lines + 1] = multiline_allowed
       and "Return only the text to insert at the cursor. Do not repeat existing suffix text from later lines."

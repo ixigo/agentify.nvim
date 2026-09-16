@@ -71,6 +71,21 @@ M.defaults = {
     },
     deny = {},
   },
+  repo_context = {
+    -- Pull definitions and call sites for identifiers near the cursor from the local
+    -- Agentify index (`agentify scan`) into the model prompt.
+    enabled = true,
+    command = { "agentify" },
+    max_symbols = 2,
+    min_symbol_chars = 3,
+    max_definition_lines = 24,
+    max_reference_lines = 4,
+    -- How long a request waits for index lookups before going ahead without them.
+    timeout_ms = 250,
+    process_timeout_ms = 4000,
+    cache_ttl_s = 120,
+    max_cache_entries = 64,
+  },
   budget = {
     -- Model requests allowed per rolling hour across all buffers; 0 disables the cap.
     -- Fast (local) suggestions keep working when the cap is reached.
@@ -347,6 +362,18 @@ function M.normalize(opts)
   expect_type("filetypes", merged.filetypes, "table")
   expect_string_list("filetypes.allow", merged.filetypes.allow)
   expect_string_list("filetypes.deny", merged.filetypes.deny)
+
+  expect_type("repo_context", merged.repo_context, "table")
+  expect_type("repo_context.enabled", merged.repo_context.enabled, "boolean")
+  merged.repo_context.command = normalize_command("repo_context.command", merged.repo_context.command)
+  expect_positive_integer("repo_context.max_symbols", merged.repo_context.max_symbols)
+  expect_positive_integer("repo_context.min_symbol_chars", merged.repo_context.min_symbol_chars)
+  expect_positive_integer("repo_context.max_definition_lines", merged.repo_context.max_definition_lines)
+  expect_positive_integer("repo_context.max_reference_lines", merged.repo_context.max_reference_lines, true)
+  expect_positive_integer("repo_context.timeout_ms", merged.repo_context.timeout_ms)
+  expect_positive_integer("repo_context.process_timeout_ms", merged.repo_context.process_timeout_ms)
+  expect_positive_integer("repo_context.cache_ttl_s", merged.repo_context.cache_ttl_s)
+  expect_positive_integer("repo_context.max_cache_entries", merged.repo_context.max_cache_entries)
 
   expect_type("budget", merged.budget, "table")
   expect_positive_integer("budget.max_requests_per_hour", merged.budget.max_requests_per_hour, true)

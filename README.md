@@ -29,6 +29,8 @@ a warm Claude or Codex session when the line needs real intent instead of simple
 - Uses your existing local `claude` or `codex` login, so there is no extra auth UI inside Neovim
 - Picks the authenticated CLI automatically, or lets you pin one
 - Pulls signal from the current line, nearby code, LSP context, symbol names, and related open buffers
+- Adds precise repo context from the local Agentify index: the definition and a few call
+  sites of the identifiers you are working with, not a giant context window
 - Supports full accept, word-by-word accept, line accept, dismiss, and manual trigger
 - Keeps the ghost text while you type through it, re-shows recent suggestions when you
   backspace, and prefetches the next one right after an accept
@@ -166,6 +168,7 @@ Most people only need to adjust a small number of options:
 - `auth.subscription_only` and `auth.strip_env` control the billing guard.
 - `budget.max_requests_per_hour`, `budget.rate_limit_cooldown_s`, and `budget.fast_only` cap the model tier.
 - `paths.deny` lists files that never get suggestions or serve as context.
+- `repo_context.*` controls definitions and call sites pulled from the local Agentify index.
 - `logging.level` helps with troubleshooting.
 
 Full defaults live in [`lua/agentify/config.lua`](lua/agentify/config.lua).
@@ -220,6 +223,38 @@ Several behaviours make suggestions feel instant while spending nothing from you
 These apply to the default `extmark` frontend. With `frontend = "lsp"`, Neovim's own inline
 completion handles type-through and re-triggering; `accept_line()` and `accept_word()` still
 work through its `on_accept` hook.
+
+## Repo-aware context
+
+When a project has been indexed with the [Agentify](https://www.npmjs.com/package/agentify)
+CLI (`agentify scan` creates `.agentify/index.db`), the model prompt gains two extra blocks
+for the identifiers near your cursor:
+
+- `REPO_DEFINITIONS`: the definition of each symbol, up to `repo_context.max_definition_lines`.
+- `REPO_CALL_SITES`: a few real call sites from other files, up to `repo_context.max_reference_lines`.
+
+Lookups run `agentify query def` and `agentify query refs` in the background and are cached
+per symbol for `repo_context.cache_ttl_s`. A request waits at most `repo_context.timeout_ms`
+(250 ms) for them and otherwise proceeds without repo context; the late answer still lands in
+the cache for the next keystroke. Buffers outside an indexed project are unaffected, and
+`:AgentifyStatus` shows whether the current buffer has an index and how the cache is doing.
+
+```lua
+require("agentify").setup({
+  repo_context = {
+    enabled = true,
+    max_symbols = 2,
+    max_definition_lines = 24,
+    max_reference_lines = 4,
+    timeout_ms = 250,
+  },
+})
+```
+
+The index covers TypeScript/JavaScript, Python, Go, Rust, .NET, Java, Kotlin, and Swift
+projects. Definitions and call sites are read from local files, so `paths.deny` still applies
+to what you open, but indexed files are sent to the provider as prompt context like any other
+nearby code.
 
 ## Billing and quota
 
