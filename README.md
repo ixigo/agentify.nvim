@@ -39,6 +39,8 @@ a warm Claude or Codex session when the line needs real intent instead of simple
 - Optimized for practical latency: instant local/template suggestions, sub-second model suggestions
   from a warm Haiku session, and a stronger model only when you ask for it
 - Optional Neovim `0.12` frontend that renders through the built-in `vim.lsp.inline_completion`
+- `:AgentifyFix` and `:AgentifyExplain` hand a diagnostic or a selection to Claude Code with
+  tools, streaming the transcript into a panel
 
 ## What it is good at
 
@@ -157,6 +159,9 @@ end)
 - `:AgentifySuggest` manually requests a suggestion at the cursor. It bypasses the hourly
   budget but not a rate-limit cooldown.
 - `:AgentifyBudgetReset` clears the hourly request window and any cooldown.
+- `:AgentifyFix` fixes the diagnostic under the cursor with Claude Code (see below).
+- `:'<,'>AgentifyExplain` explains the selected lines; without a range it explains the cursor line.
+- `:AgentifyAgentCancel` stops a running fix or explain task.
 
 ## Configuration
 
@@ -178,6 +183,7 @@ Most people only need to adjust a small number of options:
 - `paths.deny` lists files that never get suggestions or serve as context.
 - `repo_context.*` controls definitions and call sites pulled from the local Agentify index.
 - `jump.*` controls next-edit hints after an accept.
+- `agent.*` controls the model, tool sets, and panel for `:AgentifyFix` and `:AgentifyExplain`.
 - `logging.level` helps with troubleshooting.
 
 Full defaults live in [`lua/agentify/config.lua`](lua/agentify/config.lua).
@@ -239,6 +245,29 @@ Several behaviours make suggestions feel instant while spending nothing from you
 These apply to the default `extmark` frontend. With `frontend = "lsp"`, Neovim's own inline
 completion handles type-through and re-triggering; `accept_line()` and `accept_word()` still
 work through its `on_accept` hook.
+
+## Fix and explain with tools
+
+Ghost text is where a chat model is weakest; tools are where Claude Code is strongest. Two
+commands use that side directly. Each starts a fresh `claude -p` in the project root (the
+nearest `.git` directory) with a small tool set and streams the transcript into a bottom panel
+(`q` closes it).
+
+- **`:AgentifyFix`** collects the diagnostics on the cursor line, saves the buffer, and asks
+  Claude to make the smallest correct change with `Read`, `Edit`, `Grep`, and `Glob`. Edits are
+  auto-accepted inside the project root only; no shell access is granted. When the run finishes
+  the buffer reloads from disk and the one-line summary appears as a notification.
+- **`:AgentifyExplain`** sends the visual selection (or the current line) with `Read`, `Grep`,
+  and `Glob` available for looking up referenced symbols. It never gets the `Edit` tool.
+
+```lua
+vim.keymap.set("n", "<leader>af", function() require("agentify").fix() end)
+vim.keymap.set({ "n", "v" }, "<leader>ae", function() require("agentify").explain() end)
+```
+
+Both use `agent.model` (Sonnet by default), respect a rate-limit cooldown, bypass the hourly
+inline budget because they are deliberate, and count under "agent" in `:AgentifyStatus`. They
+always use the Claude CLI regardless of the inline `provider` setting.
 
 ## Repo-aware context
 

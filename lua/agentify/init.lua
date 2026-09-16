@@ -55,6 +55,15 @@ function M.setup(opts)
     reset_budget = function()
       return engine.reset_budget()
     end,
+    fix = function()
+      return M.fix()
+    end,
+    explain = function(first, last)
+      return M.explain(first, last)
+    end,
+    cancel_agent = function()
+      return require("agentify.agent").cancel()
+    end,
   })
 
   M._setup_complete = true
@@ -98,6 +107,21 @@ end
 function M.has_suggestion()
   ensure_setup()
   return engine.has_suggestion(0)
+end
+
+function M.fix()
+  ensure_setup()
+  return require("agentify.agent").fix(M.opts, 0)
+end
+
+function M.explain(first, last)
+  ensure_setup()
+  return require("agentify.agent").explain(M.opts, 0, first, last)
+end
+
+function M.cancel_agent()
+  ensure_setup()
+  return require("agentify.agent").cancel()
 end
 
 function M.reset_budget()

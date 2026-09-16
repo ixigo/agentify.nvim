@@ -27,6 +27,7 @@ function NdjsonTransport.new(opts)
   local self = setmetatable({
     command = vim.deepcopy(opts.command),
     env_blocklist = opts.env_blocklist,
+    cwd = opts.cwd,
     label = opts.label or "claude",
     handle = nil,
     stdin = nil,
@@ -85,6 +86,34 @@ function NdjsonTransport:_reset_handles()
   self.stdout = nil
   self.stderr = nil
   self.handle = nil
+end
+
+-- The process exit callback can fire before the final stdout chunks are read. Exit is
+-- therefore recorded here and handled once stdout reaches EOF (or after a short grace).
+function NdjsonTransport:_note_exit(code, signal)
+  self.exit_pending = { code = code, signal = signal }
+  if self.stdout_eof or not self.stdout then
+    self:_flush_exit()
+    return
+  end
+
+  local timer = uv.new_timer()
+  timer:start(500, 0, function()
+    timer:stop()
+    timer:close()
+    schedule(function()
+      self:_flush_exit()
+    end)
+  end)
+end
+
+function NdjsonTransport:_flush_exit()
+  local pending = self.exit_pending
+  if not pending then
+    return
+  end
+  self.exit_pending = nil
+  self:_handle_exit(pending.code, pending.signal)
 end
 
 function NdjsonTransport:_handle_exit(code, signal)
@@ -153,10 +182,11 @@ function NdjsonTransport:start()
   local handle, pid = uv.spawn(command, {
     args = args,
     env = env_util.build(self.env_blocklist),
+    cwd = self.cwd,
     stdio = { self.stdin, self.stdout, self.stderr },
   }, function(code, signal)
     schedule(function()
-      self:_handle_exit(code, signal)
+      self:_note_exit(code, signal)
     end)
   end)
 
@@ -170,6 +200,8 @@ function NdjsonTransport:start()
   self.status.running = true
   self.status.pid = pid
   self.status.started_at = os.time()
+  self.stdout_eof = false
+  self.exit_pending = nil
 
   uv.read_start(self.stdout, function(err, chunk)
     if err then
@@ -178,6 +210,16 @@ function NdjsonTransport:start()
     end
 
     if not chunk then
+      -- EOF: deliver any unterminated final line, then let a pending exit through.
+      local rest = vim.trim(self.stdout_buffer)
+      self.stdout_buffer = ""
+      if rest ~= "" then
+        self:_handle_line(rest)
+      end
+      self.stdout_eof = true
+      schedule(function()
+        self:_flush_exit()
+      end)
       return
     end
 
@@ -212,6 +254,17 @@ function NdjsonTransport:start()
   log.debug("spawned " .. self.label, { pid = pid, command = self.status.command })
 
   return true
+end
+
+-- Closes the child's stdin. One-shot `claude -p <prompt>` runs otherwise wait ~3s for
+-- piped input before starting.
+function NdjsonTransport:close_stdin()
+  if self.stdin and not self.stdin:is_closing() then
+    pcall(self.stdin.shutdown, self.stdin, function()
+      close_handle(self.stdin)
+      self.stdin = nil
+    end)
+  end
 end
 
 function NdjsonTransport:stop()

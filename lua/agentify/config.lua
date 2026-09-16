@@ -96,6 +96,17 @@ M.defaults = {
     cache_ttl_s = 120,
     max_cache_entries = 64,
   },
+  agent = {
+    -- :AgentifyFix and :AgentifyExplain run a fresh `claude -p` with tools in the project
+    -- root. They bypass the hourly budget (they are deliberate) but respect a cooldown.
+    model = "sonnet",
+    effort = "medium",
+    max_turns = 12,
+    panel_height = 12,
+    fix = { tools = { "Read", "Edit", "Grep", "Glob" } },
+    explain = { tools = { "Read", "Grep", "Glob" } },
+    extra_args = {},
+  },
   budget = {
     -- Model requests allowed per rolling hour across all buffers; 0 disables the cap.
     -- Fast (local) suggestions keep working when the cap is reached.
@@ -392,6 +403,17 @@ function M.normalize(opts)
   expect_positive_integer("repo_context.process_timeout_ms", merged.repo_context.process_timeout_ms)
   expect_positive_integer("repo_context.cache_ttl_s", merged.repo_context.cache_ttl_s)
   expect_positive_integer("repo_context.max_cache_entries", merged.repo_context.max_cache_entries)
+
+  expect_type("agent", merged.agent, "table")
+  expect_type("agent.model", merged.agent.model, "string")
+  expect_optional_string("agent.effort", merged.agent.effort)
+  expect_positive_integer("agent.max_turns", merged.agent.max_turns)
+  expect_positive_integer("agent.panel_height", merged.agent.panel_height)
+  expect_type("agent.fix", merged.agent.fix, "table")
+  expect_string_list("agent.fix.tools", merged.agent.fix.tools)
+  expect_type("agent.explain", merged.agent.explain, "table")
+  expect_string_list("agent.explain.tools", merged.agent.explain.tools)
+  expect_string_list("agent.extra_args", merged.agent.extra_args)
 
   expect_type("budget", merged.budget, "table")
   expect_positive_integer("budget.max_requests_per_hour", merged.budget.max_requests_per_hour, true)

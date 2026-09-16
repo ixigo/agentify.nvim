@@ -225,7 +225,7 @@ function M.format_setup(report)
 end
 
 function M.setup(api)
-  for _, name in ipairs({ "AgentifyStatus", "AgentifySetup", "AgentifySuggest", "AgentifyBudgetReset" }) do
+  for _, name in ipairs({ "AgentifyStatus", "AgentifySetup", "AgentifySuggest", "AgentifyBudgetReset", "AgentifyFix", "AgentifyExplain", "AgentifyAgentCancel" }) do
     pcall(vim.api.nvim_del_user_command, name)
   end
 
@@ -250,6 +250,24 @@ function M.setup(api)
     api.reset_budget()
     notify({ "Model budget window and cooldown cleared." })
   end, {})
+
+  vim.api.nvim_create_user_command("AgentifyFix", function()
+    api.fix()
+  end, { desc = "Fix the diagnostic under the cursor with Claude Code" })
+
+  vim.api.nvim_create_user_command("AgentifyExplain", function(cmd)
+    if cmd.range > 0 then
+      api.explain(cmd.line1, cmd.line2)
+    else
+      api.explain()
+    end
+  end, { range = true, desc = "Explain the selected lines with Claude Code" })
+
+  vim.api.nvim_create_user_command("AgentifyAgentCancel", function()
+    if not api.cancel_agent() then
+      notify({ "No agent task is running." })
+    end
+  end, { desc = "Cancel the running :AgentifyFix / :AgentifyExplain task" })
 end
 
 return M
