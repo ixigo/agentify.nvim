@@ -53,6 +53,7 @@ function M.destroy_buffer(bufnr)
   end
 
   close_timer(buffer_state.timer)
+  close_timer(buffer_state.edit_timer)
   M.buffers[bufnr] = nil
 end
 

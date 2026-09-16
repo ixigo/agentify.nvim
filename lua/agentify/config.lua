@@ -71,6 +71,25 @@ M.defaults = {
     },
     deny = {},
   },
+  edits = {
+    -- Remember what the user recently changed; shown to the model as RECENT_EDITS.
+    enabled = true,
+    max_edits = 8,
+    max_age_s = 180,
+    prompt_entries = 5,
+    coalesce_s = 5,
+  },
+  edit_prediction = {
+    -- After an edit, ask the model for the most likely follow-up edit elsewhere in the
+    -- window and show it as strikethrough old text plus ghost new text.
+    enabled = true,
+    idle_ms = 600,
+    window_lines = 30,
+    -- Only predict when the last edit is this recent.
+    max_edit_age_s = 60,
+    in_insert = true,
+    hint = "accept edit",
+  },
   jump = {
     -- After an accept, hint at the likely next edit (nearest diagnostic below the cursor,
     -- or a TODO / empty body / empty block). Model-free.
@@ -383,6 +402,21 @@ function M.normalize(opts)
   expect_type("filetypes", merged.filetypes, "table")
   expect_string_list("filetypes.allow", merged.filetypes.allow)
   expect_string_list("filetypes.deny", merged.filetypes.deny)
+
+  expect_type("edits", merged.edits, "table")
+  expect_type("edits.enabled", merged.edits.enabled, "boolean")
+  expect_positive_integer("edits.max_edits", merged.edits.max_edits)
+  expect_positive_integer("edits.max_age_s", merged.edits.max_age_s)
+  expect_positive_integer("edits.prompt_entries", merged.edits.prompt_entries)
+  expect_positive_integer("edits.coalesce_s", merged.edits.coalesce_s, true)
+
+  expect_type("edit_prediction", merged.edit_prediction, "table")
+  expect_type("edit_prediction.enabled", merged.edit_prediction.enabled, "boolean")
+  expect_positive_integer("edit_prediction.idle_ms", merged.edit_prediction.idle_ms)
+  expect_positive_integer("edit_prediction.window_lines", merged.edit_prediction.window_lines)
+  expect_positive_integer("edit_prediction.max_edit_age_s", merged.edit_prediction.max_edit_age_s)
+  expect_type("edit_prediction.in_insert", merged.edit_prediction.in_insert, "boolean")
+  expect_type("edit_prediction.hint", merged.edit_prediction.hint, "string")
 
   expect_type("jump", merged.jump, "table")
   expect_type("jump.enabled", merged.jump.enabled, "boolean")

@@ -67,6 +67,9 @@ local function render_budget(report)
   end
 
   local st = b.stats or {}
+  if (st.edit_prediction or 0) > 0 or (st.edit_accepted or 0) > 0 then
+    table.insert(lines, ("edit predictions: %d shown, %d accepted"):format(st.edit_prediction or 0, st.edit_accepted or 0))
+  end
   table.insert(lines, ("answered by: fast %d, recall %d, type-through %d, model %d, skipped %d"):format(
     st.fast or 0,
     st.recall or 0,
@@ -89,7 +92,7 @@ local function render_repo_context(report)
   end
 
   if not rc.cli_available then
-    return "repo index: `agentify` CLI not found (npm install -g agentify)"
+    return "repo index: `agentify` CLI not found (see https://ixigo.github.io/agentify/)"
   end
 
   if not rc.root then

@@ -89,6 +89,21 @@ function M.accept_line()
   return engine.accept_line(0)
 end
 
+function M.accept_edit()
+  ensure_setup()
+  return engine.accept_edit(0)
+end
+
+function M.has_edit_prediction()
+  ensure_setup()
+  return engine.has_edit_prediction(0)
+end
+
+function M.predict_edit()
+  ensure_setup()
+  return engine.predict_edit(0)
+end
+
 function M.jump()
   ensure_setup()
   return engine.jump(0)
