@@ -29,7 +29,9 @@ a warm Claude or Codex session when the line needs real intent instead of simple
 - Uses your existing local `claude` or `codex` login, so there is no extra auth UI inside Neovim
 - Picks the authenticated CLI automatically, or lets you pin one
 - Pulls signal from the current line, nearby code, LSP context, symbol names, and related open buffers
-- Supports full accept, word-by-word accept, dismiss, and manual trigger
+- Supports full accept, word-by-word accept, line accept, dismiss, and manual trigger
+- Keeps the ghost text while you type through it, re-shows recent suggestions when you
+  backspace, and prefetches the next one right after an accept
 - Optimized for practical latency: instant local/template suggestions, sub-second model suggestions
   from a warm Haiku session, and a stronger model only when you ask for it
 - Optional Neovim `0.12` frontend that renders through the built-in `vim.lsp.inline_completion`
@@ -112,6 +114,10 @@ vim.keymap.set("i", "<M-w>", function()
   require("agentify").accept_word()
 end)
 
+vim.keymap.set("i", "<M-l>", function()
+  require("agentify").accept_line()
+end)
+
 vim.keymap.set("i", "<M-]>", function()
   require("agentify").dismiss()
 end)
@@ -121,7 +127,10 @@ end)
 
 - Start typing in insert mode and wait for the debounce window to pass.
 - Accept the whole suggestion with `require("agentify").accept()`.
-- Accept the next word with `require("agentify").accept_word()`.
+- Accept the next word with `require("agentify").accept_word()`; the rest of the suggestion stays visible.
+- Accept the first line of a multi-line suggestion with `require("agentify").accept_line()`.
+- Keep typing the suggested characters and the ghost text shortens instead of disappearing.
+- Backspace into a spot that already had a suggestion and it comes back instantly, without a model call.
 - Dismiss the current suggestion with `require("agentify").dismiss()`.
 - Use `:AgentifySuggest` to force a manual request. With Claude this uses the stronger
   `manual_model` (Sonnet by default); the first manual request boots that session, so expect a
@@ -144,7 +153,10 @@ Most people only need to adjust a small number of options:
 - `provider` picks `"auto"`, `"claude"`, or `"codex"`.
 - `frontend` picks `"extmark"` (default) or `"lsp"` (Neovim 0.12+, see below).
 - `warmup_on_insert` spawns the CLI session when you enter insert mode so the first suggestion is fast.
-- `debounce_ms` controls how quickly auto-suggestions appear.
+- `debounce_ms` controls how quickly auto-suggestions appear; `debounce_busy_ms` is used
+  instead while a model request is already running.
+- `type_through`, `recall`, and `prefetch_after_accept` control the keep-typing, backspace
+  recall, and accept-then-prefetch behaviours (all on by default).
 - `filetypes.allow` and `filetypes.deny` decide where Agentify runs.
 - `suggestion.multiline` and `suggestion.max_lines` control multi-line completions.
 - `providers.claude.model`, `providers.claude.manual_model`, and `providers.claude.effort` control Claude.
@@ -184,6 +196,26 @@ require("agentify").setup({
 
 The older `codex = { ... }` table is still accepted and is folded into `providers.codex` with a
 one-time deprecation notice.
+
+## Latency without model calls
+
+Several behaviours make suggestions feel instant while spending nothing from your usage window:
+
+- **Type-through.** When the characters you type match the head of the ghost text, the
+  suggestion shrinks in place. No request is sent and any in-flight one is cancelled.
+- **Recall.** Every shown suggestion is remembered against its exact cursor context (line,
+  prefix, suffix), up to `recall.max_entries` per buffer. Backspacing into that context shows
+  it again immediately. An explicit dismiss removes that entry so it does not bounce back.
+- **Partial accepts keep the rest.** `accept_word()` and `accept_line()` insert a fragment and
+  re-anchor the remainder at the new cursor position.
+- **Prefetch after accept.** A full accept asks for the next suggestion right away instead of
+  waiting for the next keystroke plus debounce.
+- **Adaptive debounce.** While a model request is in flight the debounce widens to
+  `debounce_busy_ms`, so a fast burst of typing does not become a burst of interrupted turns.
+
+These apply to the default `extmark` frontend. With `frontend = "lsp"`, Neovim's own inline
+completion handles type-through and re-triggering; `accept_line()` and `accept_word()` still
+work through its `on_accept` hook.
 
 ## Billing and quota
 
@@ -226,7 +258,7 @@ end, { expr = true })
 In this mode:
 
 - `require("agentify").accept()` calls `vim.lsp.inline_completion.get()`.
-- `require("agentify").accept_word()` accepts the next word through the `on_accept` hook.
+- `require("agentify").accept_word()` and `accept_line()` accept a fragment through the `on_accept` hook.
 - `require("agentify").dismiss()` clears the current candidate.
 - `:AgentifySuggest` triggers a manual request through the same server.
 - Triggering and debouncing are handled by Neovim, so `debounce_ms` does not apply.

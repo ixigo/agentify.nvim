@@ -277,6 +277,22 @@ function M.accept_word(bufnr)
   })
 end
 
+function M.accept_line(bufnr)
+  if not M.is_supported() then
+    return false
+  end
+
+  return vim.lsp.inline_completion.get({
+    bufnr = bufnr,
+    on_accept = function(item)
+      if type(item.insert_text) == "string" then
+        item.insert_text = actions.first_line_fragment(item.insert_text)
+      end
+      return item
+    end,
+  })
+end
+
 function M.dismiss(bufnr)
   if not M.is_supported() then
     return false

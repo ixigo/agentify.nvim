@@ -5,6 +5,7 @@ local intent = require("agentify.intent")
 local lsp = require("agentify.lsp")
 local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
+local recall = require("agentify.recall")
 local render = require("agentify.render")
 local state = require("agentify.state")
 local template_suggest = require("agentify.template_suggest")
@@ -75,6 +76,164 @@ local function buffer_eligible(bufnr)
   return config.is_buffer_enabled(M.opts, bufnr)
 end
 
+local function line_at(bufnr, row)
+  return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+end
+
+local function split_lines(text)
+  return vim.split(text, "\n", { plain = true, trimempty = false })
+end
+
+local function has_visible_text(text)
+  return type(text) == "string" and text:match("%S") ~= nil
+end
+
+local function remember(bufnr, suggestion)
+  if not M.opts.recall.enabled or not suggestion.line then
+    return
+  end
+
+  local key = recall.key(suggestion.row, suggestion.line:sub(1, suggestion.col), suggestion.line:sub(suggestion.col + 1))
+  recall.remember(bufnr, key, suggestion.text, M.opts.recall.max_entries)
+end
+
+-- Stores and renders a suggestion. `suggestion.line` is the buffer line at show time and
+-- is what type-through and recall compare against later.
+function M.show_suggestion(bufnr, suggestion, opts)
+  opts = opts or {}
+  local buffer_state = state.get_buffer(bufnr)
+
+  suggestion.bufnr = bufnr
+  suggestion.line = suggestion.line or line_at(bufnr, suggestion.row)
+  suggestion.request_token = suggestion.request_token or state.next_request(bufnr)
+
+  buffer_state.suggestion = suggestion
+  render.show(bufnr, suggestion, M.opts)
+
+  if opts.remember ~= false then
+    remember(bufnr, suggestion)
+  end
+
+  return suggestion
+end
+
+-- Reconciles the visible suggestion with the current cursor and line.
+-- Returns "kept" when nothing changed, "shortened" when the user typed the head of the
+-- ghost text (type-through), or nil when the suggestion no longer applies.
+function M.reconcile(bufnr)
+  local buffer_state = state.get_buffer(bufnr)
+  local suggestion = buffer_state.suggestion
+  if not suggestion or vim.api.nvim_get_current_buf() ~= bufnr then
+    return nil
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor[1] - 1, cursor[2]
+  if row ~= suggestion.row or col < suggestion.col then
+    return nil
+  end
+
+  local line = line_at(bufnr, row)
+  local previous = suggestion.line or ""
+
+  if line:sub(1, suggestion.col) ~= previous:sub(1, suggestion.col) then
+    return nil
+  end
+
+  if col == suggestion.col then
+    return line == previous and "kept" or nil
+  end
+
+  if not M.opts.type_through then
+    return nil
+  end
+
+  local typed_count = col - suggestion.col
+  local first_line = split_lines(suggestion.text)[1]
+  if typed_count > #first_line then
+    return nil
+  end
+
+  if line:sub(suggestion.col + 1, col) ~= first_line:sub(1, typed_count) then
+    return nil
+  end
+
+  -- The text after the cursor must be untouched too.
+  if line:sub(col + 1) ~= previous:sub(suggestion.col + 1) then
+    return nil
+  end
+
+  local remainder = suggestion.text:sub(typed_count + 1)
+  if not has_visible_text(remainder) then
+    actions.dismiss(bufnr)
+    return nil
+  end
+
+  suggestion.col = col
+  suggestion.text = remainder
+  suggestion.line = line
+  suggestion.source = suggestion.source or "provider"
+  render.show(bufnr, suggestion, M.opts)
+  remember(bufnr, suggestion)
+  log.debug("type-through shortened suggestion", { bufnr = bufnr, remaining = remainder })
+
+  return "shortened"
+end
+
+-- Re-shows a remembered suggestion for the exact current cursor context, if any.
+function M.recall_show(bufnr)
+  if not M.opts.recall.enabled or vim.api.nvim_get_current_buf() ~= bufnr then
+    return false
+  end
+
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor[1] - 1, cursor[2]
+  local line = line_at(bufnr, row)
+  local text = recall.lookup(bufnr, recall.key(row, line:sub(1, col), line:sub(col + 1)))
+  if not text then
+    return false
+  end
+
+  M.show_suggestion(bufnr, {
+    row = row,
+    col = col,
+    text = text,
+    line = line,
+    source = "recall",
+  }, { remember = false })
+  log.debug("recalled suggestion", { bufnr = bufnr, text = text })
+
+  return true
+end
+
+function M.debounce_delay(bufnr)
+  local buffer_state = state.get_buffer(bufnr)
+  if buffer_state.active_request then
+    return M.opts.debounce_busy_ms
+  end
+
+  return M.opts.debounce_ms
+end
+
+-- Asks for the next suggestion right away, used after an accept.
+function M.prefetch(bufnr)
+  if not M.opts.prefetch_after_accept then
+    return
+  end
+
+  vim.schedule(function()
+    if not vim.api.nvim_buf_is_valid(bufnr) or vim.api.nvim_get_current_buf() ~= bufnr then
+      return
+    end
+
+    if not vim.api.nvim_get_mode().mode:match("^i") then
+      return
+    end
+
+    M.request(bufnr, { manual = false })
+  end)
+end
+
 -- Builds the completion context for the cursor position, including LSP and intent signal.
 function M.build_context(bufnr, manual)
   local ctx, reason = context.build(bufnr, M.opts)
@@ -138,14 +297,14 @@ function M._handle_provider_event(bufnr, request_token, snapshot, ctx, event)
 
   local text = context.sanitize_completion(ctx, event.text, M.opts)
   if text and text ~= "" then
-    buffer_state.suggestion = {
-      bufnr = bufnr,
+    M.show_suggestion(bufnr, {
       row = ctx.row,
       col = ctx.col,
       text = text,
+      line = ctx.line,
       request_token = request_token,
-    }
-    render.show(bufnr, buffer_state.suggestion, M.opts)
+      source = "provider",
+    }, { remember = event.type == "completed" })
   elseif event.type == "completed" and not active.preserve_existing then
     actions.dismiss(bufnr)
   end
@@ -190,15 +349,13 @@ function M.request(bufnr, request_opts)
   if not request_opts.manual then
     local fast_completion, continue_to_provider = M.fast_suggestion(bufnr, ctx)
     if fast_completion then
-      buffer_state.suggestion = {
-        bufnr = bufnr,
+      M.show_suggestion(bufnr, {
         row = ctx.row,
         col = ctx.col,
         text = fast_completion.text,
-        request_token = state.next_request(bufnr),
+        line = ctx.line,
         source = fast_completion.source,
-      }
-      render.show(bufnr, buffer_state.suggestion, M.opts)
+      })
       log.debug("rendered fast suggestion", {
         bufnr = bufnr,
         source = fast_completion.source,
@@ -329,7 +486,7 @@ function M.schedule(bufnr)
   end
 
   buffer_state.timer:stop()
-  buffer_state.timer:start(M.opts.debounce_ms, 0, vim.schedule_wrap(function()
+  buffer_state.timer:start(M.debounce_delay(bufnr), 0, vim.schedule_wrap(function()
     M.request(bufnr, { manual = false })
   end))
 end
@@ -341,7 +498,46 @@ function M.accept(bufnr)
   end
 
   M.cancel_request(bufnr, "accepted")
-  return actions.accept(bufnr)
+  local accepted = actions.accept(bufnr)
+  if accepted then
+    M.prefetch(bufnr)
+  end
+
+  return accepted
+end
+
+-- Inserts part of the suggestion and keeps the rest visible at the new cursor position.
+local function accept_fragment(bufnr, fragment_of, reason)
+  M.cancel_request(bufnr, reason)
+
+  local suggestion = actions.get(bufnr)
+  if not suggestion then
+    return false
+  end
+
+  local fragment = fragment_of(suggestion.text)
+  local remainder = suggestion.text:sub(#fragment + 1)
+  local source = suggestion.source
+
+  if not actions.apply(bufnr, fragment) then
+    return false
+  end
+
+  if has_visible_text(remainder) then
+    local inserted = split_lines(fragment)
+    local row = suggestion.row + #inserted - 1
+    local col = #inserted == 1 and (suggestion.col + #fragment) or #inserted[#inserted]
+    M.show_suggestion(bufnr, {
+      row = row,
+      col = col,
+      text = remainder,
+      source = source,
+    })
+  else
+    M.prefetch(bufnr)
+  end
+
+  return true
 end
 
 function M.accept_word(bufnr)
@@ -350,8 +546,16 @@ function M.accept_word(bufnr)
     return inline_lsp().accept_word(bufnr)
   end
 
-  M.cancel_request(bufnr, "accepted-word")
-  return actions.accept_word(bufnr)
+  return accept_fragment(bufnr, actions.next_word_fragment, "accepted-word")
+end
+
+function M.accept_line(bufnr)
+  bufnr = resolve_bufnr(bufnr)
+  if M.frontend == "lsp" then
+    return inline_lsp().accept_line(bufnr)
+  end
+
+  return accept_fragment(bufnr, actions.first_line_fragment, "accepted-line")
 end
 
 function M.dismiss(bufnr)
@@ -361,6 +565,13 @@ function M.dismiss(bufnr)
   end
 
   M.cancel_request(bufnr, "dismissed")
+
+  -- An explicit dismiss should not come straight back from the recall cache.
+  local suggestion = actions.get(bufnr)
+  if suggestion and suggestion.line then
+    recall.forget(bufnr, recall.key(suggestion.row, suggestion.line:sub(1, suggestion.col), suggestion.line:sub(suggestion.col + 1)))
+  end
+
   return actions.dismiss(bufnr)
 end
 
@@ -408,6 +619,18 @@ function M.setup(opts, provider)
           return
         end
 
+        -- Typing the ghost text keeps it; nothing to request.
+        if M.reconcile(args.buf) then
+          M.cancel_request(args.buf, "type-through")
+          return
+        end
+
+        -- Backspacing into a prefix we already answered re-shows it instantly.
+        if M.recall_show(args.buf) then
+          M.cancel_request(args.buf, "recalled")
+          return
+        end
+
         M.schedule(args.buf)
       end,
     })
@@ -417,6 +640,14 @@ function M.setup(opts, provider)
       callback = function(args)
         local buffer_state = state.get_buffer(args.buf)
         if buffer_state.suggestion or buffer_state.active_request then
+          local outcome = M.reconcile(args.buf)
+          if outcome then
+            if outcome == "shortened" then
+              M.cancel_request(args.buf, "type-through")
+            end
+            return
+          end
+
           local active = buffer_state.active_request
           if active and M.is_snapshot_stale(active.snapshot) then
             clear_buffer(args.buf, "cursor-moved")
@@ -465,6 +696,7 @@ function M.setup(opts, provider)
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group,
     callback = function(args)
+      recall.clear(args.buf)
       state.destroy_buffer(args.buf)
     end,
   })
