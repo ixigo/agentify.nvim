@@ -78,6 +78,34 @@ local function render_budget(report)
   return lines
 end
 
+local function render_repo_context(report)
+  local rc = report.repo_context
+  if not rc then
+    return nil
+  end
+
+  if not rc.enabled then
+    return "repo index: disabled"
+  end
+
+  if not rc.cli_available then
+    return "repo index: `agentify` CLI not found (npm install -g agentify)"
+  end
+
+  if not rc.root then
+    return "repo index: none for this buffer (run `agentify scan` in the project)"
+  end
+
+  local st = rc.stats or {}
+  return ("repo index: %s (%d cached symbols, %d hits, %d lookups, %d timeouts)"):format(
+    rc.root,
+    rc.cache_entries or 0,
+    st.hits or 0,
+    st.lookups or 0,
+    st.timeouts or 0
+  )
+end
+
 local function render_auth(report)
   local auth = report.auth
   if not auth then
@@ -141,6 +169,11 @@ function M.format_status(report)
 
   for _, line in ipairs(render_budget(report)) do
     table.insert(lines, line)
+  end
+
+  local repo_line = render_repo_context(report)
+  if repo_line then
+    table.insert(lines, repo_line)
   end
 
   if report.error then

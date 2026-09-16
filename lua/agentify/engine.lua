@@ -8,6 +8,7 @@ local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
 local recall = require("agentify.recall")
 local render = require("agentify.render")
+local repo_context = require("agentify.repo_context")
 local state = require("agentify.state")
 local template_suggest = require("agentify.template_suggest")
 
@@ -436,17 +437,18 @@ function M.request(bufnr, request_opts)
   local snapshot = context.snapshot(ctx)
   snapshot.require_insert_mode = not request_opts.manual
 
-  local handle = M.provider:complete(ctx, function(event)
-    vim.schedule(function()
-      M._handle_provider_event(bufnr, token, snapshot, ctx, event)
-    end)
-  end)
-  log.debug("queued completion request", {
-    bufnr = bufnr,
-    token = token,
-    manual = request_opts.manual == true,
-    filetype = ctx.filetype,
-  })
+  -- The handle exists before the provider call so a cancel during repo-context
+  -- collection is honoured.
+  local handle = { cancelled = false, inner = nil, turn_id = nil }
+  function handle.cancel(reason)
+    if handle.cancelled then
+      return
+    end
+    handle.cancelled = true
+    if handle.inner and handle.inner.cancel then
+      handle.inner.cancel(reason or "cancelled")
+    end
+  end
 
   buffer_state.active_request = {
     token = token,
@@ -454,6 +456,31 @@ function M.request(bufnr, request_opts)
     snapshot = snapshot,
     preserve_existing = buffer_state.suggestion ~= nil,
   }
+
+  repo_context.collect(ctx, M.opts, function(repo)
+    if handle.cancelled then
+      return
+    end
+
+    local active = buffer_state.active_request
+    if not active or active.token ~= token then
+      return
+    end
+
+    ctx.repo = repo
+    handle.inner = M.provider:complete(ctx, function(event)
+      vim.schedule(function()
+        M._handle_provider_event(bufnr, token, snapshot, ctx, event)
+      end)
+    end)
+    log.debug("queued completion request", {
+      bufnr = bufnr,
+      token = token,
+      manual = request_opts.manual == true,
+      filetype = ctx.filetype,
+      repo_symbols = repo and #repo.symbols or 0,
+    })
+  end)
 
   return true, nil
 end
@@ -520,29 +547,36 @@ function M.compute(bufnr, request_opts, callback)
   local snapshot = context.snapshot(ctx)
   snapshot.require_insert_mode = not request_opts.manual
 
-  handle.inner = M.provider:complete(ctx, function(event)
-    vim.schedule(function()
-      if done then
-        return
-      end
+  repo_context.collect(ctx, M.opts, function(repo)
+    if done then
+      return
+    end
 
-      if event.type == "error" then
-        log.warn("provider error", { error = event.error })
-        M.note_provider_error(event.error)
-        finish(nil)
-        return
-      end
+    ctx.repo = repo
+    handle.inner = M.provider:complete(ctx, function(event)
+      vim.schedule(function()
+        if done then
+          return
+        end
 
-      if event.type ~= "completed" then
-        return
-      end
+        if event.type == "error" then
+          log.warn("provider error", { error = event.error })
+          M.note_provider_error(event.error)
+          finish(nil)
+          return
+        end
 
-      if M.is_snapshot_stale(snapshot) then
-        finish(nil)
-        return
-      end
+        if event.type ~= "completed" then
+          return
+        end
 
-      finish(context.sanitize_completion(ctx, event.text, M.opts), "provider")
+        if M.is_snapshot_stale(snapshot) then
+          finish(nil)
+          return
+        end
+
+        finish(context.sanitize_completion(ctx, event.text, M.opts), "provider")
+      end)
     end)
   end)
 
@@ -663,6 +697,7 @@ function M.status(callback)
   M.provider:status(function(report)
     report.frontend = M.frontend
     report.budget = M.budget:report()
+    report.repo_context = repo_context.status(M.opts, bufnr)
     report.buffer = {
       bufnr = bufnr,
       filetype = vim.bo[bufnr].filetype,
