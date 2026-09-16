@@ -144,7 +144,9 @@ end)
   session usage or rate limits, and whether the current buffer is eligible.
 - `:AgentifySetup` prints focused setup help when a CLI or its login is missing, or when the CLI is
   signed in with API-key billing.
-- `:AgentifySuggest` manually requests a suggestion at the cursor.
+- `:AgentifySuggest` manually requests a suggestion at the cursor. It bypasses the hourly
+  budget but not a rate-limit cooldown.
+- `:AgentifyBudgetReset` clears the hourly request window and any cooldown.
 
 ## Configuration
 
@@ -162,6 +164,8 @@ Most people only need to adjust a small number of options:
 - `providers.claude.model`, `providers.claude.manual_model`, and `providers.claude.effort` control Claude.
 - `providers.codex.model` and `providers.codex.effort` control Codex.
 - `auth.subscription_only` and `auth.strip_env` control the billing guard.
+- `budget.max_requests_per_hour`, `budget.rate_limit_cooldown_s`, and `budget.fast_only` cap the model tier.
+- `paths.deny` lists files that never get suggestions or serve as context.
 - `logging.level` helps with troubleshooting.
 
 Full defaults live in [`lua/agentify/config.lua`](lua/agentify/config.lua).
@@ -220,7 +224,9 @@ work through its `on_accept` hook.
 ## Billing and quota
 
 Agentify is meant to run against the hour-based usage windows of a Claude or ChatGPT subscription,
-not against a pay-per-token API key.
+not against a pay-per-token API key. Two layers keep autocomplete from eating that window.
+
+**Auth guard**
 
 - `auth.subscription_only = true` (default) makes `:AgentifyStatus` report **not ready** when a CLI
   is signed in with an API key, and `:AgentifySetup` tells you how to switch to a subscription login.
@@ -235,6 +241,36 @@ not against a pay-per-token API key.
 
 If you knowingly want API-key billing, set `auth.subscription_only = false` and remove the key
 from `auth.strip_env`.
+
+**Model budget**
+
+- `budget.max_requests_per_hour` (default 300) caps model requests in a rolling hour across
+  all buffers. When the cap is reached you get one notification, fast suggestions keep working,
+  and the model tier resumes as the window slides or after `:AgentifyBudgetReset`. Set it to
+  `0` to remove the cap.
+- `budget.rate_limit_cooldown_s` (default 300) pauses the model tier when a provider reports a
+  rate or usage limit, instead of retrying on every keystroke.
+- `budget.fast_only = true` never calls the model automatically; only `:AgentifySuggest` does.
+- `:AgentifyStatus` shows the window usage, any pause, and which tier answered how many
+  suggestions this session (fast, recall, type-through, model, skipped), so you can judge
+  whether the model tier is earning its quota.
+
+## Sensitive files
+
+Buffers whose path matches a `paths.deny` pattern get no suggestions at all and are never read
+as related context for other buffers. The default list covers `.env` files, `secrets/`
+directories, private keys and certificates, `.ssh`, `.aws`, `.gnupg`, and anything named
+`credentials`. Patterns are Lua patterns matched case-insensitively against the full path:
+
+```lua
+require("agentify").setup({
+  paths = {
+    deny = { "%.env$", "/secrets?/", "/vendor/" },
+  },
+})
+```
+
+Both providers send buffer context to a hosted model; keep that in mind when adding paths.
 
 ## Neovim 0.12 inline completion frontend
 

@@ -71,6 +71,37 @@ M.defaults = {
     },
     deny = {},
   },
+  budget = {
+    -- Model requests allowed per rolling hour across all buffers; 0 disables the cap.
+    -- Fast (local) suggestions keep working when the cap is reached.
+    max_requests_per_hour = 300,
+    -- Pause the model tier for this long after a provider reports a rate limit.
+    rate_limit_cooldown_s = 300,
+    -- Never call the model automatically; only `:AgentifySuggest` reaches it.
+    fast_only = false,
+    -- Show a one-time notification when the model tier is paused.
+    notify = true,
+  },
+  paths = {
+    -- Lua patterns matched (case-insensitively) against the full buffer path. Matching
+    -- buffers get no suggestions and are never used as context for other buffers.
+    deny = {
+      "%.env$",
+      "%.env%.",
+      "/secrets?/",
+      "%.pem$",
+      "%.key$",
+      "%.p12$",
+      "%.pfx$",
+      "%.kdbx$",
+      "id_rsa",
+      "id_ed25519",
+      "credentials",
+      "/%.aws/",
+      "/%.ssh/",
+      "/%.gnupg/",
+    },
+  },
   auth = {
     -- Only use hour-based subscription sessions (claude.ai login, ChatGPT login).
     -- API-key billing is refused and API-key environment variables are stripped
@@ -128,6 +159,13 @@ local function is_list(value)
   return type(value) == "table" and vim.islist(value)
 end
 
+local function is_empty(value)
+  return type(value) == "table" and next(value) == nil
+end
+
+-- Deep-merges dict-like tables; list-like values replace the default outright.
+-- An empty override table against a dict default (e.g. `budget = {}`) keeps the defaults,
+-- while against a list default (e.g. `paths = { deny = {} }`) it clears the list.
 local function merge_tables(base, override)
   if type(base) ~= "table" or type(override) ~= "table" then
     return vim.deepcopy(override)
@@ -136,8 +174,10 @@ local function merge_tables(base, override)
   local merged = vim.deepcopy(base)
 
   for key, value in pairs(override) do
-    if type(value) == "table" and type(base[key]) == "table" and not is_list(value) and not is_list(base[key]) then
-      merged[key] = merge_tables(base[key], value)
+    local base_value = base[key]
+    local base_is_dict = type(base_value) == "table" and not is_list(base_value)
+    if type(value) == "table" and base_is_dict and (is_empty(value) or not is_list(value)) then
+      merged[key] = merge_tables(base_value, value)
     else
       merged[key] = vim.deepcopy(value)
     end
@@ -308,6 +348,15 @@ function M.normalize(opts)
   expect_string_list("filetypes.allow", merged.filetypes.allow)
   expect_string_list("filetypes.deny", merged.filetypes.deny)
 
+  expect_type("budget", merged.budget, "table")
+  expect_positive_integer("budget.max_requests_per_hour", merged.budget.max_requests_per_hour, true)
+  expect_positive_integer("budget.rate_limit_cooldown_s", merged.budget.rate_limit_cooldown_s, true)
+  expect_type("budget.fast_only", merged.budget.fast_only, "boolean")
+  expect_type("budget.notify", merged.budget.notify, "boolean")
+
+  expect_type("paths", merged.paths, "table")
+  expect_string_list("paths.deny", merged.paths.deny)
+
   expect_type("auth", merged.auth, "table")
   expect_type("auth.subscription_only", merged.auth.subscription_only, "boolean")
   expect_string_list("auth.strip_env", merged.auth.strip_env)
@@ -337,9 +386,31 @@ local function contains(list, needle)
   return false
 end
 
+-- True when `path` matches any `paths.deny` pattern.
+function M.path_denied(opts, path)
+  if type(path) ~= "string" or path == "" or not opts.paths then
+    return false
+  end
+
+  local lowered = path:lower()
+  for _, pattern in ipairs(opts.paths.deny or {}) do
+    local ok, found = pcall(string.find, lowered, pattern:lower())
+    if ok and found then
+      return true, pattern
+    end
+  end
+
+  return false
+end
+
 function M.is_buffer_enabled(opts, bufnr)
   if not opts.enabled then
     return false, "plugin disabled"
+  end
+
+  local denied, pattern = M.path_denied(opts, vim.api.nvim_buf_get_name(bufnr))
+  if denied then
+    return false, ("path matches paths.deny (%s)"):format(pattern)
   end
 
   if vim.bo[bufnr].buftype ~= "" then

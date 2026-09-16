@@ -1,4 +1,5 @@
 local actions = require("agentify.actions")
+local budget = require("agentify.budget")
 local config = require("agentify.config")
 local context = require("agentify.context")
 local intent = require("agentify.intent")
@@ -16,6 +17,7 @@ local M = {
   opts = nil,
   provider = nil,
   frontend = "extmark",
+  budget = nil,
 }
 
 local function resolve_bufnr(bufnr)
@@ -175,6 +177,7 @@ function M.reconcile(bufnr)
   suggestion.source = suggestion.source or "provider"
   render.show(bufnr, suggestion, M.opts)
   remember(bufnr, suggestion)
+  M.budget:count("type_through")
   log.debug("type-through shortened suggestion", { bufnr = bufnr, remaining = remainder })
 
   return "shortened"
@@ -201,6 +204,7 @@ function M.recall_show(bufnr)
     line = line,
     source = "recall",
   }, { remember = false })
+  M.budget:count("recall")
   log.debug("recalled suggestion", { bufnr = bufnr, text = text })
 
   return true
@@ -232,6 +236,60 @@ function M.prefetch(bufnr)
 
     M.request(bufnr, { manual = false })
   end)
+end
+
+local function notify_budget(reason)
+  if not M.opts.budget.notify or not M.budget:should_announce(reason) then
+    return
+  end
+
+  local report = M.budget:report()
+  local message
+  if reason == "budget" then
+    message = ("Model suggestions paused: %d requests in the last hour (budget.max_requests_per_hour = %d). Fast suggestions continue; the model resumes in %s or after :AgentifyBudgetReset."):format(
+      report.used,
+      report.limit,
+      budget.format_duration(report.resets_in)
+    )
+  elseif reason == "cooldown" then
+    message = ("Provider reported a rate limit; model suggestions paused for %s. Fast suggestions continue."):format(
+      budget.format_duration(report.paused_for or 0)
+    )
+  else
+    return
+  end
+
+  vim.schedule(function()
+    vim.notify("agentify.nvim: " .. message, vim.log.levels.WARN, { title = "agentify.nvim" })
+  end)
+end
+
+-- Decides whether the model tier may be asked right now and records the request if so.
+function M.provider_allowed(manual)
+  local allowed, reason = M.budget:allow(os.time(), manual)
+  if not allowed then
+    M.budget:skip(reason)
+    notify_budget(reason)
+    log.debug("provider request skipped", { reason = reason })
+    return false, reason
+  end
+
+  M.budget:record(os.time())
+  return true, nil
+end
+
+-- Pauses the model tier when a provider error looks like a rate limit.
+function M.note_provider_error(err)
+  if budget.is_rate_limit(err) and M.opts.budget.rate_limit_cooldown_s > 0 then
+    M.budget:pause(M.opts.budget.rate_limit_cooldown_s, "rate_limit")
+    notify_budget("cooldown")
+    log.warn("provider rate limited; pausing model suggestions", { error = err })
+  end
+end
+
+function M.reset_budget()
+  M.budget:resume(true)
+  return true
 end
 
 -- Builds the completion context for the cursor position, including LSP and intent signal.
@@ -283,6 +341,7 @@ function M._handle_provider_event(bufnr, request_token, snapshot, ctx, event)
       actions.dismiss(bufnr)
     end
     log.warn("provider error", { error = event.error })
+    M.note_provider_error(event.error)
     return
   end
 
@@ -361,10 +420,16 @@ function M.request(bufnr, request_opts)
         source = fast_completion.source,
         text = fast_completion.text,
       })
+      M.budget:count("fast")
       if not continue_to_provider then
         return true, fast_completion.reason or fast_completion.source
       end
     end
+  end
+
+  local allowed, skip_reason = M.provider_allowed(request_opts.manual)
+  if not allowed then
+    return buffer_state.suggestion ~= nil, ("provider skipped: %s"):format(skip_reason)
   end
 
   local token = state.next_request(bufnr)
@@ -441,9 +506,15 @@ function M.compute(bufnr, request_opts, callback)
   if not request_opts.manual then
     local fast_completion, continue_to_provider = M.fast_suggestion(bufnr, ctx)
     if fast_completion and not continue_to_provider then
+      M.budget:count("fast")
       finish(fast_completion.text, fast_completion.source)
       return handle
     end
+  end
+
+  if not M.provider_allowed(request_opts.manual) then
+    finish(nil)
+    return handle
   end
 
   local snapshot = context.snapshot(ctx)
@@ -457,6 +528,7 @@ function M.compute(bufnr, request_opts, callback)
 
       if event.type == "error" then
         log.warn("provider error", { error = event.error })
+        M.note_provider_error(event.error)
         finish(nil)
         return
       end
@@ -590,6 +662,7 @@ function M.status(callback)
 
   M.provider:status(function(report)
     report.frontend = M.frontend
+    report.budget = M.budget:report()
     report.buffer = {
       bufnr = bufnr,
       filetype = vim.bo[bufnr].filetype,
@@ -606,6 +679,7 @@ function M.setup(opts, provider)
   M.opts = opts
   M.provider = provider
   M.frontend = opts.frontend or "extmark"
+  M.budget = budget.new(opts)
 
   local group = vim.api.nvim_create_augroup("Agentify", { clear = true })
 
