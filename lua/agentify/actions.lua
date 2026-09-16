@@ -11,7 +11,7 @@ local function resolve_bufnr(bufnr)
   return bufnr
 end
 
-local function next_word_fragment(text)
+function M.next_word_fragment(text)
   local leading = text:match("^(%s*)") or ""
   local rest = text:sub(#leading + 1)
 
@@ -93,7 +93,7 @@ function M.accept_word(bufnr)
     return false
   end
 
-  return apply_suggestion(bufnr, next_word_fragment(suggestion.text))
+  return apply_suggestion(bufnr, M.next_word_fragment(suggestion.text))
 end
 
 function M.dismiss(bufnr)

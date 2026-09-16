@@ -1,5 +1,5 @@
 local log = require("agentify.log")
-local prompt = require("agentify.provider.codex_prompt")
+local prompt = require("agentify.provider.prompt")
 local stdio = require("agentify.transport.stdio")
 
 local M = {}
@@ -18,10 +18,13 @@ end
 function CodexProvider.new(opts)
   local self = setmetatable({
     opts = opts,
+    popts = opts.providers.codex,
     transport = stdio.new({
-      command = opts.codex.command,
+      command = opts.providers.codex.command,
+      env_blocklist = opts.auth.strip_env,
+      label = "codex app-server",
       client_name = "agentify.nvim",
-      client_version = "0.1.0",
+      client_version = "0.2.0",
     }),
     thread_id = nil,
     account = nil,
@@ -53,11 +56,11 @@ function CodexProvider.new(opts)
 end
 
 function CodexProvider:_check_cli()
-  if command_available(self.opts.codex.command[1]) then
+  if command_available(self.popts.command[1]) then
     return true
   end
 
-  return false, ("codex CLI not found: %s"):format(table.concat(self.opts.codex.command, " "))
+  return false, ("codex CLI not found: %s"):format(table.concat(self.popts.command, " "))
 end
 
 function CodexProvider:_interrupt_turn(turn_id)
@@ -113,16 +116,16 @@ function CodexProvider:_ensure_thread(callback)
       ephemeral = true,
       experimentalRawEvents = false,
       persistExtendedHistory = false,
-      baseInstructions = prompt.base_instructions(self.opts),
+      baseInstructions = prompt.base_instructions(self.opts, self.popts),
       serviceName = "agentify.nvim",
     }
 
-    if self.opts.codex.model then
-      params.model = self.opts.codex.model
+    if self.popts.model then
+      params.model = self.popts.model
     end
 
-    if self.opts.codex.service_tier then
-      params.serviceTier = self.opts.codex.service_tier
+    if self.popts.service_tier then
+      params.serviceTier = self.popts.service_tier
     end
 
     self.transport:request("thread/start", params, function(response, request_err)
@@ -287,7 +290,7 @@ function CodexProvider:complete(context, callback)
     local params = {
       threadId = thread_id,
       approvalPolicy = "never",
-      effort = self.opts.codex.effort,
+      effort = self.popts.effort,
       summary = "none",
       input = {
         {
@@ -298,12 +301,12 @@ function CodexProvider:complete(context, callback)
       },
     }
 
-    if self.opts.codex.model then
-      params.model = self.opts.codex.model
+    if self.popts.model then
+      params.model = self.popts.model
     end
 
-    if self.opts.codex.service_tier then
-      params.serviceTier = self.opts.codex.service_tier
+    if self.popts.service_tier then
+      params.serviceTier = self.popts.service_tier
     end
 
     log.debug("starting codex completion turn", {
@@ -365,9 +368,10 @@ end
 function CodexProvider:status(callback)
   local report = {
     provider = "codex",
+    provider_label = "Codex",
     cli = {
-      available = command_available(self.opts.codex.command[1]),
-      command = vim.deepcopy(self.opts.codex.command),
+      available = command_available(self.popts.command[1]),
+      command = vim.deepcopy(self.popts.command),
     },
     transport = self.transport:get_status(),
     thread = {
@@ -381,7 +385,8 @@ function CodexProvider:status(callback)
   }
 
   if not report.cli.available then
-    report.error = ("codex CLI not found: %s"):format(table.concat(self.opts.codex.command, " "))
+    report.error = ("codex CLI not found: %s"):format(table.concat(self.popts.command, " "))
+    report.setup_hint = "Install the Codex CLI, then restart Neovim."
     callback(report)
     return
   end
@@ -396,7 +401,7 @@ function CodexProvider:status(callback)
     end
 
     self.transport:request("account/read", {
-      refreshToken = self.opts.codex.refresh_account_token,
+      refreshToken = self.popts.refresh_account_token,
     }, function(account_response, account_err)
       if account_err then
         report.error = account_err
@@ -424,18 +429,49 @@ function CodexProvider:status(callback)
         local account = report.account and report.account.account or nil
         local requires_auth = report.account and report.account.requiresOpenaiAuth
         local needs_login = account == nil and requires_auth
+        report.auth = M.normalize_account(account)
         report.ready = account ~= nil and report.transport.initialized
 
         if report.ready and not rate_err then
           report.error = nil
         elseif not report.ready and not report.error and needs_login then
-          report.error = "Codex CLI is not authenticated. Run `codex login`."
+          report.error = "Codex CLI is not authenticated."
+          report.setup_hint = "Run `codex login` and sign in with your ChatGPT account, then re-run `:AgentifyStatus`."
+        end
+
+        if report.ready and self.opts.auth.subscription_only and report.auth.method ~= "subscription" then
+          report.ready = false
+          report.error = "Codex is authenticated with API-key billing; Agentify only uses subscription sessions."
+          report.setup_hint = "Run `codex login` to use your ChatGPT subscription (hour-based limits), or set `auth.subscription_only = false` to allow API-key billing."
         end
 
         callback(report)
       end)
     end)
   end)
+end
+
+-- Maps the app-server account object onto the provider-neutral auth shape.
+function M.normalize_account(account)
+  if not account then
+    return { logged_in = false }
+  end
+
+  if account.type == "chatgpt" then
+    return {
+      logged_in = true,
+      method = "subscription",
+      label = account.email or "chatgpt",
+      plan = account.planType,
+    }
+  end
+
+  return {
+    logged_in = true,
+    method = "api_key",
+    label = "api key",
+    plan = nil,
+  }
 end
 
 function M.new(opts)

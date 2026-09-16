@@ -22,10 +22,29 @@ function M.setup(opts)
   log.clear()
   log.configure(resolved.logging)
 
+  for _, message in ipairs(resolved.deprecations or {}) do
+    log.warn("deprecated config: " .. message)
+    vim.schedule(function()
+      vim.notify("agentify.nvim: " .. message, vim.log.levels.WARN, { title = "agentify.nvim" })
+    end)
+  end
+
+  if resolved.frontend == "lsp" and not require("agentify.inline_lsp").is_supported() then
+    log.warn("frontend = 'lsp' requires Neovim 0.12+ (vim.lsp.inline_completion); falling back to extmark")
+    resolved.frontend = "extmark"
+  end
+
   M.opts = resolved
   M.provider = provider_factory.create(resolved)
 
   engine.setup(resolved, M.provider)
+
+  if resolved.frontend == "lsp" then
+    require("agentify.inline_lsp").setup(resolved, {
+      compute = engine.compute,
+    })
+  end
+
   commands.setup({
     status = function(callback)
       engine.status(callback)
@@ -69,4 +88,3 @@ function M.status(callback)
 end
 
 return M
-

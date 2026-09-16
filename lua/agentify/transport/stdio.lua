@@ -1,3 +1,4 @@
+local env_util = require("agentify.transport.env")
 local log = require("agentify.log")
 
 local uv = vim.uv or vim.loop
@@ -22,6 +23,8 @@ end
 function StdioTransport.new(opts)
   local self = setmetatable({
     command = vim.deepcopy(opts.command),
+    env_blocklist = opts.env_blocklist,
+    label = opts.label or "codex app-server",
     client_info = {
       name = opts.client_name or "agentify.nvim",
       version = opts.client_version or "0.1.0",
@@ -115,7 +118,7 @@ function StdioTransport:_handle_exit(code, signal)
   }
 
   if not self.status.last_error then
-    self.status.last_error = ("codex app-server exited with code %s"):format(tostring(code))
+    self.status.last_error = ("%s exited with code %s"):format(self.label, tostring(code))
   end
 
   self:_reset_handles()
@@ -163,7 +166,7 @@ end
 
 function StdioTransport:_write(payload)
   if not self.stdin or self.stdin:is_closing() then
-    return false, "codex app-server stdin is unavailable"
+    return false, ("%s stdin is unavailable"):format(self.label)
   end
 
   local ok, err = pcall(self.stdin.write, self.stdin, vim.json.encode(payload) .. "\n")
@@ -242,6 +245,7 @@ function StdioTransport:start(callback)
 
   local handle, pid = uv.spawn(command, {
     args = args,
+    env = env_util.build(self.env_blocklist),
     stdio = { self.stdin, self.stdout, self.stderr },
   }, function(code, signal)
     schedule(function()

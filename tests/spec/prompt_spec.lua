@@ -2,7 +2,7 @@ local config = require("agentify.config")
 local context = require("agentify.context")
 local h = require("tests.helpers")
 local intent = require("agentify.intent")
-local prompt = require("agentify.provider.codex_prompt")
+local prompt = require("agentify.provider.prompt")
 
 return {
   {
@@ -48,6 +48,27 @@ return {
       if not ok then
         error(result, 0)
       end
+    end,
+  },
+  {
+    name = "shares base instructions across providers with per-provider overrides",
+    fn = function()
+      local opts = config.normalize({
+        providers = {
+          claude = { base_instructions = "Prefer snake_case." },
+        },
+      })
+
+      local claude_text = prompt.base_instructions(opts, opts.providers.claude)
+      h.match("independent completion request", claude_text)
+      h.match("Prefer snake_case%.", claude_text)
+      h.match("Return at most 4 lines%.", claude_text)
+
+      local codex_text = prompt.base_instructions(opts, opts.providers.codex)
+      h.ok(not codex_text:find("snake_case", 1, true), "codex must not inherit the claude override")
+
+      local legacy = require("agentify.provider.codex_prompt")
+      h.eq(codex_text, legacy.base_instructions(opts))
     end,
   },
 }
