@@ -52,6 +52,9 @@ function M.setup(opts)
     suggest = function()
       engine.request(0, { manual = true })
     end,
+    reset_budget = function()
+      return engine.reset_budget()
+    end,
   })
 
   M._setup_complete = true
@@ -85,6 +88,11 @@ end
 function M.has_suggestion()
   ensure_setup()
   return engine.has_suggestion(0)
+end
+
+function M.reset_budget()
+  ensure_setup()
+  return engine.reset_budget()
 end
 
 function M.status(callback)

@@ -101,4 +101,20 @@ return {
       h.match("providers.claude.command", err_cmd)
     end,
   },
+  {
+    name = "an empty override table keeps dict defaults but clears list defaults",
+    fn = function()
+      local opts = config.normalize({
+        budget = {},
+        lsp = {},
+        paths = { deny = {} },
+        providers = { claude = { extra_args = {} } },
+      })
+
+      h.eq(300, opts.budget.max_requests_per_hour)
+      h.eq(true, opts.lsp.enabled)
+      h.eq({}, opts.paths.deny)
+      h.eq({}, opts.providers.claude.extra_args)
+    end,
+  },
 }

@@ -38,6 +38,46 @@ local function render_usage(report)
   )
 end
 
+local function render_budget(report)
+  local b = report.budget
+  if not b then
+    return {}
+  end
+
+  local budget = require("agentify.budget")
+  local lines = {}
+
+  if b.fast_only then
+    table.insert(lines, "model tier: fast-only (budget.fast_only)")
+  elseif b.limit > 0 then
+    table.insert(lines, ("model budget: %d/%d requests this hour (window resets in %s)"):format(
+      b.used,
+      b.limit,
+      budget.format_duration(b.resets_in)
+    ))
+  else
+    table.insert(lines, ("model budget: %d requests this hour (no cap)"):format(b.used))
+  end
+
+  if b.paused_for and b.paused_for > 0 then
+    table.insert(lines, ("model tier paused: %s, resumes in %s"):format(
+      tostring(b.pause_reason or "paused"):gsub("_", " "),
+      budget.format_duration(b.paused_for)
+    ))
+  end
+
+  local st = b.stats or {}
+  table.insert(lines, ("answered by: fast %d, recall %d, type-through %d, model %d, skipped %d"):format(
+    st.fast or 0,
+    st.recall or 0,
+    st.type_through or 0,
+    st.provider or 0,
+    (st.skipped_budget or 0) + (st.skipped_cooldown or 0) + (st.skipped_fast_only or 0)
+  ))
+
+  return lines
+end
+
 local function render_auth(report)
   local auth = report.auth
   if not auth then
@@ -99,6 +139,10 @@ function M.format_status(report)
   local thread = report.thread or {}
   table.insert(lines, ("warm session: %s"):format((thread.warm or thread.id) and "yes" or "no"))
 
+  for _, line in ipairs(render_budget(report)) do
+    table.insert(lines, line)
+  end
+
   if report.error then
     table.insert(lines, ("error: %s"):format(report.error))
   end
@@ -148,7 +192,7 @@ function M.format_setup(report)
 end
 
 function M.setup(api)
-  for _, name in ipairs({ "AgentifyStatus", "AgentifySetup", "AgentifySuggest" }) do
+  for _, name in ipairs({ "AgentifyStatus", "AgentifySetup", "AgentifySuggest", "AgentifyBudgetReset" }) do
     pcall(vim.api.nvim_del_user_command, name)
   end
 
@@ -167,6 +211,11 @@ function M.setup(api)
 
   vim.api.nvim_create_user_command("AgentifySuggest", function()
     api.suggest()
+  end, {})
+
+  vim.api.nvim_create_user_command("AgentifyBudgetReset", function()
+    api.reset_budget()
+    notify({ "Model budget window and cooldown cleared." })
   end, {})
 end
 

@@ -313,8 +313,12 @@ local function build_hints(definition, symbol_name)
   return hints, words
 end
 
-local function searchable_buffer(bufnr, filetype)
+local function searchable_buffer(bufnr, filetype, opts)
   if not vim.api.nvim_buf_is_valid(bufnr) then
+    return false
+  end
+
+  if opts and require("agentify.config").path_denied(opts, vim.api.nvim_buf_get_name(bufnr)) then
     return false
   end
 
@@ -405,7 +409,7 @@ local function collect_related_lines(bufnr, ctx, intent, opts)
   local buffers = { bufnr }
 
   for _, candidate_bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if candidate_bufnr ~= bufnr and searchable_buffer(candidate_bufnr, ctx.filetype) then
+    if candidate_bufnr ~= bufnr and searchable_buffer(candidate_bufnr, ctx.filetype, opts) then
       buffers[#buffers + 1] = candidate_bufnr
       if #buffers >= opts.intent.max_open_buffers then
         break
