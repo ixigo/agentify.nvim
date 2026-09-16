@@ -71,6 +71,16 @@ M.defaults = {
     },
     deny = {},
   },
+  jump = {
+    -- After an accept, hint at the likely next edit (nearest diagnostic below the cursor,
+    -- or a TODO / empty body / empty block). Model-free.
+    enabled = true,
+    max_distance = 40,
+    diagnostics = true,
+    max_severity = vim.diagnostic.severity.WARN,
+    placeholders = true,
+    highlight = "DiagnosticVirtualTextHint",
+  },
   repo_context = {
     -- Pull definitions and call sites for identifiers near the cursor from the local
     -- Agentify index (`agentify scan`) into the model prompt.
@@ -362,6 +372,14 @@ function M.normalize(opts)
   expect_type("filetypes", merged.filetypes, "table")
   expect_string_list("filetypes.allow", merged.filetypes.allow)
   expect_string_list("filetypes.deny", merged.filetypes.deny)
+
+  expect_type("jump", merged.jump, "table")
+  expect_type("jump.enabled", merged.jump.enabled, "boolean")
+  expect_positive_integer("jump.max_distance", merged.jump.max_distance)
+  expect_type("jump.diagnostics", merged.jump.diagnostics, "boolean")
+  expect_positive_integer("jump.max_severity", merged.jump.max_severity)
+  expect_type("jump.placeholders", merged.jump.placeholders, "boolean")
+  expect_type("jump.highlight", merged.jump.highlight, "string")
 
   expect_type("repo_context", merged.repo_context, "table")
   expect_type("repo_context.enabled", merged.repo_context.enabled, "boolean")

@@ -80,6 +80,16 @@ function M.accept_line()
   return engine.accept_line(0)
 end
 
+function M.jump()
+  ensure_setup()
+  return engine.jump(0)
+end
+
+function M.has_jump_hint()
+  ensure_setup()
+  return engine.has_jump_hint(0)
+end
+
 function M.dismiss()
   ensure_setup()
   return engine.dismiss(0)

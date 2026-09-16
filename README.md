@@ -34,6 +34,8 @@ a warm Claude or Codex session when the line needs real intent instead of simple
 - Supports full accept, word-by-word accept, line accept, dismiss, and manual trigger
 - Keeps the ghost text while you type through it, re-shows recent suggestions when you
   backspace, and prefetches the next one right after an accept
+- Hints at the likely next edit after an accept (the nearest diagnostic, a TODO, an empty
+  body) and jumps there on a keymap, without a model call
 - Optimized for practical latency: instant local/template suggestions, sub-second model suggestions
   from a warm Haiku session, and a stronger model only when you ask for it
 - Optional Neovim `0.12` frontend that renders through the built-in `vim.lsp.inline_completion`
@@ -123,6 +125,10 @@ end)
 vim.keymap.set("i", "<M-]>", function()
   require("agentify").dismiss()
 end)
+
+vim.keymap.set({ "i", "n" }, "<M-j>", function()
+  require("agentify").jump()
+end)
 ```
 
 ## Daily usage
@@ -133,6 +139,8 @@ end)
 - Accept the first line of a multi-line suggestion with `require("agentify").accept_line()`.
 - Keep typing the suggested characters and the ghost text shortens instead of disappearing.
 - Backspace into a spot that already had a suggestion and it comes back instantly, without a model call.
+- After an accept, a `⇣ next edit` hint may appear on a later line; `require("agentify").jump()`
+  moves the cursor there. `has_jump_hint()` lets a `<Tab>` mapping fall through when there is none.
 - Dismiss the current suggestion with `require("agentify").dismiss()`.
 - Use `:AgentifySuggest` to force a manual request. With Claude this uses the stronger
   `manual_model` (Sonnet by default); the first manual request boots that session, so expect a
@@ -169,6 +177,7 @@ Most people only need to adjust a small number of options:
 - `budget.max_requests_per_hour`, `budget.rate_limit_cooldown_s`, and `budget.fast_only` cap the model tier.
 - `paths.deny` lists files that never get suggestions or serve as context.
 - `repo_context.*` controls definitions and call sites pulled from the local Agentify index.
+- `jump.*` controls next-edit hints after an accept.
 - `logging.level` helps with troubleshooting.
 
 Full defaults live in [`lua/agentify/config.lua`](lua/agentify/config.lua).
@@ -219,6 +228,13 @@ Several behaviours make suggestions feel instant while spending nothing from you
   waiting for the next keystroke plus debounce.
 - **Adaptive debounce.** While a model request is in flight the debounce widens to
   `debounce_busy_ms`, so a fast burst of typing does not become a burst of interrupted turns.
+
+- **Next-edit hints.** After a full accept (or the last line of a multi-line accept) the
+  plugin looks up to `jump.max_distance` lines below the cursor for the nearest error or
+  warning diagnostic, then for placeholders such as `TODO`, `pass`, `...`, `{}`, or
+  "not implemented", and marks the first hit with a `⇣ next edit` label. If it is off-screen
+  the cursor line also gets a `↓ next edit at line N` pointer. The hint clears when you move to
+  another line or edit; `jump()` takes you there. Configure with `jump.*`.
 
 These apply to the default `extmark` frontend. With `frontend = "lsp"`, Neovim's own inline
 completion handles type-through and re-triggering; `accept_line()` and `accept_word()` still

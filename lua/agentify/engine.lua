@@ -3,6 +3,7 @@ local budget = require("agentify.budget")
 local config = require("agentify.config")
 local context = require("agentify.context")
 local intent = require("agentify.intent")
+local jump = require("agentify.jump")
 local lsp = require("agentify.lsp")
 local local_suggest = require("agentify.local_suggest")
 local log = require("agentify.log")
@@ -218,6 +219,27 @@ function M.debounce_delay(bufnr)
   end
 
   return M.opts.debounce_ms
+end
+
+-- Shows a next-edit hint for the cursor position, used after an accept.
+function M.hint_next_edit(bufnr)
+  if not M.opts.jump.enabled then
+    return
+  end
+
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_get_current_buf() == bufnr then
+      jump.suggest(bufnr, M.opts.jump)
+    end
+  end)
+end
+
+function M.jump(bufnr)
+  return jump.jump(resolve_bufnr(bufnr))
+end
+
+function M.has_jump_hint(bufnr)
+  return jump.has(resolve_bufnr(bufnr))
 end
 
 -- Asks for the next suggestion right away, used after an accept.
@@ -600,13 +622,21 @@ end
 function M.accept(bufnr)
   bufnr = resolve_bufnr(bufnr)
   if M.frontend == "lsp" then
-    return inline_lsp().accept(bufnr)
+    local accepted = inline_lsp().accept(bufnr)
+    if accepted then
+      -- Neovim applies the accept on the next tick; hint after it lands.
+      vim.defer_fn(function()
+        M.hint_next_edit(bufnr)
+      end, 20)
+    end
+    return accepted
   end
 
   M.cancel_request(bufnr, "accepted")
   local accepted = actions.accept(bufnr)
   if accepted then
     M.prefetch(bufnr)
+    M.hint_next_edit(bufnr)
   end
 
   return accepted
@@ -641,6 +671,7 @@ local function accept_fragment(bufnr, fragment_of, reason)
     })
   else
     M.prefetch(bufnr)
+    M.hint_next_edit(bufnr)
   end
 
   return true
@@ -782,6 +813,23 @@ function M.setup(opts, provider)
     })
   end
 
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = group,
+    callback = function(args)
+      jump.on_cursor_moved(args.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = group,
+    callback = function(args)
+      local buffer_state = state.get_buffer(args.buf)
+      if not buffer_state.suppress_text_changed and jump.has(args.buf) then
+        jump.clear(args.buf)
+      end
+    end,
+  })
+
   vim.api.nvim_create_autocmd("InsertEnter", {
     group = group,
     callback = function(args)
@@ -806,6 +854,7 @@ function M.setup(opts, provider)
     group = group,
     callback = function(args)
       recall.clear(args.buf)
+      jump.clear(args.buf)
       state.destroy_buffer(args.buf)
     end,
   })
